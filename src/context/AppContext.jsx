@@ -403,10 +403,18 @@ export function AppProvider({ children }) {
           const cleanRemote = remoteProducts.filter(
             p => p && p.id && !p.id.startsWith('hw-') && !p.id.startsWith('prod-00')
           )
-          setProducts(cleanRemote)
-          try {
-            localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(cleanRemote))
-          } catch (e) {}
+          // Preserve any locally added products that are not yet on remote Supabase
+          setProducts(prevLocal => {
+            const remoteMap = new Map(cleanRemote.map(p => [p.id, p]))
+            const localOnly = (prevLocal || []).filter(
+              lp => lp && lp.id && !remoteMap.has(lp.id) && !lp.id.startsWith('hw-') && !lp.id.startsWith('prod-00')
+            )
+            const merged = [...cleanRemote, ...localOnly]
+            try {
+              localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(merged))
+            } catch (e) {}
+            return merged
+          })
         } else if (prodErr) {
           console.warn('Products fetch notice:', prodErr.message)
         }
@@ -657,10 +665,13 @@ export function AppProvider({ children }) {
       if (matchCat) categoryId = matchCat.id
     }
 
+    // Strip client-only or non-existent columns (e.g. category_slug)
+    const { category_slug, ...cleanProductData } = productData
+
     const newProduct = {
-      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'prod-' + Date.now(),
+      id: generateUUID(),
       created_at: new Date().toISOString(),
-      ...productData,
+      ...cleanProductData,
       in_stock: inStock,
       stock: stockUnits,
       price: parseFloat(productData.price) || 0,
@@ -672,31 +683,63 @@ export function AppProvider({ children }) {
 
     // Resolve any placement collisions first
     const resolvedList = await resolvePlacements(products, newProduct.id, section)
+    const nextProducts = [newProduct, ...resolvedList]
 
+    // 1. Instantly update React state & localStorage so the product appears on the storefront immediately
+    setProducts(nextProducts)
+    try {
+      localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(nextProducts))
+      window.dispatchEvent(new Event('storage'))
+    } catch (e) {}
+
+    // 2. Persist to Supabase
     if (isSupabaseConfigured && supabase) {
       try {
         const { data, error } = await supabase.from('products').insert([newProduct]).select()
         if (!error && data && data[0]) {
-          setProducts([data[0], ...resolvedList])
-          return data[0]
+          const finalItem = { ...newProduct, ...data[0] }
+          const finalList = [finalItem, ...resolvedList]
+          setProducts(finalList)
+          try {
+            localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(finalList))
+          } catch (e) {}
+          return finalItem
         } else if (error) {
-          // If columns don't exist yet on Supabase (e.g. display_section, sort_order, category_id), insert with supported core fields
-          const { display_section, sort_order, category_id, ...fallbackProduct } = newProduct
-          const { data: fbData, error: fbErr } = await supabase.from('products').insert([fallbackProduct]).select()
+          // If columns don't exist yet on Supabase schema (e.g. display_section, sort_order, category_id),
+          // fallback to inserting ONLY the supported core database fields:
+          const coreFallback = {
+            id: newProduct.id,
+            name: newProduct.name,
+            description: newProduct.description || '',
+            price: newProduct.price,
+            category: newProduct.category || 'General',
+            series: newProduct.series || null,
+            edition: newProduct.edition || null,
+            color: newProduct.color || null,
+            hw_num: newProduct.hw_num !== undefined ? newProduct.hw_num : null,
+            image_url: newProduct.image_url,
+            stock: newProduct.stock,
+            in_stock: newProduct.in_stock,
+            created_at: newProduct.created_at
+          }
+          const { data: fbData, error: fbErr } = await supabase.from('products').insert([coreFallback]).select()
           if (!fbErr && fbData?.[0]) {
-            const returned = { ...fbData[0], display_section: section, sort_order: sortOrder, category_id: categoryId }
-            setProducts([returned, ...resolvedList])
+            const returned = { ...newProduct, ...fbData[0], display_section: section, sort_order: sortOrder, category_id: categoryId }
+            const finalList = [returned, ...resolvedList]
+            setProducts(finalList)
+            try {
+              localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(finalList))
+            } catch (e) {}
             return returned
           } else {
-            console.warn('Supabase product insert notice (persisting locally):', error.message || fbErr?.message)
+            console.warn('Supabase product insert notice (persisted in localStorage):', error.message || fbErr?.message)
           }
         }
       } catch (err) {
-        console.warn('Supabase product insert error, saved locally:', err)
+        console.warn('Supabase product insert error (persisted in localStorage):', err)
       }
     }
 
-    setProducts([newProduct, ...resolvedList])
     return newProduct
   }
 
@@ -708,18 +751,25 @@ export function AppProvider({ children }) {
       stock: updates.stock !== undefined ? parseInt(updates.stock) : undefined,
       sort_order: updates.sort_order !== undefined ? parseInt(updates.sort_order) || 0 : undefined,
     }
+    delete sanitized.category_slug
 
     let currentList = products
     if (sanitized.display_section) {
       currentList = await resolvePlacements(products, id, sanitized.display_section)
     }
 
+    const updatedList = currentList.map(p => (p.id === id ? { ...p, ...sanitized } : p))
+    setProducts(updatedList)
+    try {
+      localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(updatedList))
+    } catch (e) {}
+
     if (isSupabaseConfigured && supabase) {
       try {
         const { error } = await supabase.from('products').update(sanitized).eq('id', id)
-        if (error && error.code === 'PGRST204') {
+        if (error) {
           // Fallback if schema does not have display_section or sort_order yet
-          const { display_section, sort_order, ...fallbackUpdates } = sanitized
+          const { display_section, sort_order, category_id, ...fallbackUpdates } = sanitized
           if (Object.keys(fallbackUpdates).length > 0) {
             await supabase.from('products').update(fallbackUpdates).eq('id', id)
           }
@@ -728,10 +778,6 @@ export function AppProvider({ children }) {
         console.error(err)
       }
     }
-
-    setProducts(
-      currentList.map(p => (p.id === id ? { ...p, ...sanitized } : p))
-    )
   }
 
   const toggleSoldOut = async (id) => {
