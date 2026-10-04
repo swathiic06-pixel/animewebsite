@@ -20,12 +20,11 @@ alter table if exists public.products add column if not exists category_id text;
 delete from public.products 
 where id like 'hw-%' 
    or id like 'prod-00%' 
-   or name like '%Hot Wheels%'
    or name like '%Demo%'
    or name like '%Test%';
 
 delete from public.orders 
-where id in ('ord-9042', 'ord-8711') 
+where id::text in ('ord-9042', 'ord-8711') 
    or buyer_name like '%Test%' 
    or buyer_name like '%Demo%';
 
