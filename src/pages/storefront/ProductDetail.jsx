@@ -9,7 +9,9 @@ import {
   ChatCircle,
   Minus,
   Plus,
-  ShareNetwork
+  ShareNetwork,
+  ArrowsOutSimple,
+  X
 } from '@phosphor-icons/react'
 import { useApp } from '../../context/AppContext'
 import { useCart } from '../../context/CartContext'
@@ -27,6 +29,8 @@ export default function ProductDetail() {
 
   const [quantity, setQuantity] = useState(1)
   const [copied, setCopied] = useState(false)
+  const [imageFit, setImageFit] = useState('cover')
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false)
 
   const product = products.find((p) => p.id === id)
 
@@ -95,15 +99,47 @@ export default function ProductDetail() {
 
         {/* Product Image */}
         <div className="lg:col-span-6 space-y-4">
-          <div className="relative aspect-[4/5] sm:aspect-square lg:aspect-[4/5] rounded-[12px] overflow-hidden bg-[#F8F8F6] border border-[#E5E5E5] flex items-center justify-center p-4">
+          <div className="relative aspect-[4/5] sm:aspect-square lg:aspect-[4/5] rounded-[16px] overflow-hidden bg-[#18181b] border border-[#E5E5E5] flex items-center justify-center group shadow-xs">
+            {/* Ambient Blurred Glow for Non-Square / Custom Images */}
+            {product.image_url && (
+              <div
+                className="absolute inset-0 bg-cover bg-center blur-2xl opacity-40 scale-125 pointer-events-none transition-opacity duration-300"
+                style={{ backgroundImage: `url(${product.image_url})` }}
+                aria-hidden="true"
+              />
+            )}
+
+            {/* Fit / Fill toggle & Fullscreen Zoom controls */}
+            <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5 opacity-90 hover:opacity-100 transition-opacity">
+              <button
+                type="button"
+                onClick={() => setImageFit(prev => prev === 'cover' ? 'contain' : 'cover')}
+                className="px-2.5 py-1 rounded-[10px] bg-white/90 backdrop-blur-md border border-[#E5E5E5] text-[11px] font-semibold text-[#111111] hover:bg-white shadow-xs transition-all flex items-center gap-1 cursor-pointer"
+                title={imageFit === 'cover' ? 'Switch to uncropped full image view' : 'Fill entire container'}
+              >
+                <span>{imageFit === 'cover' ? 'Fit Whole' : 'Fill Frame'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsLightboxOpen(true)}
+                className="p-1.5 rounded-[10px] bg-white/90 backdrop-blur-md border border-[#E5E5E5] text-[#111111] hover:bg-white shadow-xs transition-all cursor-pointer"
+                title="View full-size photo"
+              >
+                <ArrowsOutSimple size={14} />
+              </button>
+            </div>
+
             <img
               src={cldUrl(product.image_url, { width: 1200 })}
               alt={product.name}
               onError={handleImageError}
-              className={`max-w-full max-h-full object-contain ${isSoldOut ? 'grayscale-[30%]' : ''}`}
+              onClick={() => setIsLightboxOpen(true)}
+              className={`relative z-10 w-full h-full cursor-zoom-in transition-all duration-300 ${
+                imageFit === 'cover' ? 'object-cover' : 'object-contain p-2'
+              } ${isSoldOut ? 'grayscale-[30%]' : ''}`}
             />
             {isSoldOut && (
-              <div className="absolute inset-0 flex items-center justify-center" style={{ background: 'rgba(17,17,17,0.4)' }}>
+              <div className="absolute inset-0 z-20 flex items-center justify-center" style={{ background: 'rgba(17,17,17,0.4)' }}>
                 <span className="px-5 py-2 rounded-[12px] bg-[#DC2626] text-white font-bold text-sm tracking-widest uppercase">
                   Sold Out
                 </span>
@@ -281,6 +317,29 @@ export default function ProductDetail() {
             {relatedProducts.map((p) => (
               <ProductCard key={p.id} product={p} />
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Fullscreen Lightbox Modal */}
+      {isLightboxOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-200"
+          onClick={() => setIsLightboxOpen(false)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] flex flex-col items-center justify-center" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setIsLightboxOpen(false)}
+              className="self-end mb-2 text-white/80 hover:text-white text-xs font-semibold flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-all cursor-pointer"
+            >
+              <span>Close</span>
+              <X size={16} />
+            </button>
+            <img
+              src={product.image_url}
+              alt={product.name}
+              className="max-w-full max-h-[82vh] object-contain rounded-xl shadow-2xl bg-black/40 border border-white/10"
+            />
           </div>
         </div>
       )}

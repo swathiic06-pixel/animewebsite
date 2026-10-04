@@ -25,13 +25,20 @@ export default function ProductCard({ product }) {
     <div className={`sf-product-card group relative flex flex-col ${isSoldOut ? 'opacity-80' : ''}`}>
 
       {/* Product Image & Badges */}
-      <Link to={`/product/${product.id}`} className="relative aspect-[4/5] overflow-hidden bg-[#F8F8F6] flex items-center justify-center p-3 block">
+      <Link to={`/product/${product.id}`} className="relative aspect-[4/5] overflow-hidden bg-[#18181b]/5 flex items-center justify-center p-3 block group">
+        {product.image_url && (
+          <div
+            className="absolute inset-0 bg-cover bg-center blur-md opacity-25 scale-125 pointer-events-none"
+            style={{ backgroundImage: `url(${product.image_url})` }}
+            aria-hidden="true"
+          />
+        )}
         <img
           src={cldUrl(product.image_url, { width: 400, height: 500, crop: 'limit' })}
           alt={product.name}
           loading="lazy"
           onError={handleImageError}
-          className={`sf-product-img max-w-full max-h-full object-contain ${isSoldOut ? 'grayscale-[30%]' : ''}`}
+          className={`sf-product-img relative z-10 max-w-full max-h-full object-contain ${isSoldOut ? 'grayscale-[30%]' : ''}`}
         />
 
         {/* Top-left badges */}
