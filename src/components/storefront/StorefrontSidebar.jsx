@@ -20,22 +20,32 @@ import {
   X,
   Check,
   Package,
-  Bell
+  Bell,
+  UploadSimple,
+  CircleNotch,
+  Trash,
+  WarningCircle
 } from '@phosphor-icons/react'
 import { useApp } from '../../context/AppContext'
 import { formatPrice } from '../../utils/formatPrice'
 import AnimaxLogo from './AnimaxLogo'
-import { cldUrl } from '../../lib/cloudinary'
+import { cldUrl, uploadImage, PRESETS } from '../../lib/cloudinary'
 
 export default function StorefrontSidebar() {
-  const { mockUser, setMockUser, logout, orders, products, categories = [] } = useApp()
+  const { mockUser, setMockUser, logout, orders, products, categories = [], submitProductRequest } = useApp()
   const location = useLocation()
   const navigate = useNavigate()
 
   // Modal states for Quick Actions
   const [modalType, setModalType] = useState(null) // 'request' | 'restock' | null
   const [requestItemName, setRequestItemName] = useState('')
-  const [requestAnime, setRequestAnime] = useState('')
+  const [requestImageUrl, setRequestImageUrl] = useState('')
+  const [isRequestUploading, setIsRequestUploading] = useState(false)
+  const [requestUploadError, setRequestUploadError] = useState('')
+  const [requestSubmitting, setRequestSubmitting] = useState(false)
+  const [requestSuccess, setRequestSuccess] = useState(false)
+  const [requestError, setRequestError] = useState('')
+
   const [restockEmail, setRestockEmail] = useState('')
   const [selectedRestockProduct, setSelectedRestockProduct] = useState('')
   const [toastMessage, setToastMessage] = useState('')
@@ -45,13 +55,59 @@ export default function StorefrontSidebar() {
     setTimeout(() => setToastMessage(''), 4000)
   }
 
-  const handleRequestSubmit = (e) => {
+  const handleRequestImageChange = async (file) => {
+    if (!file) return
+    setRequestUploadError('')
+    if (!file.type.match(/^image\/(jpeg|png|webp|jpg)$/i)) {
+      setRequestUploadError('Please select a JPG, PNG, or WebP image.')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setRequestUploadError('Image size exceeds 5MB limit.')
+      return
+    }
+    setIsRequestUploading(true)
+    try {
+      const { secure_url } = await uploadImage(file, PRESETS.products)
+      setRequestImageUrl(secure_url)
+      if (requestError) setRequestError('')
+    } catch (err) {
+      setRequestUploadError(err.message || 'Failed to upload photo')
+    } finally {
+      setIsRequestUploading(false)
+    }
+  }
+
+  const handleRequestSubmit = async (e) => {
     e.preventDefault()
-    if (!requestItemName.trim()) return
-    showToast(`Request received for "${requestItemName}"! We'll search our supplier network.`)
-    setRequestItemName('')
-    setRequestAnime('')
-    setModalType(null)
+    setRequestError('')
+    const name = requestItemName.trim()
+    const img = requestImageUrl.trim()
+
+    if (!name && !img) {
+      setRequestError('Please provide either a product/character name or a reference photo.')
+      return
+    }
+
+    setRequestSubmitting(true)
+    try {
+      await submitProductRequest({
+        product_name: name || null,
+        reference_image_url: img || null,
+        user_id: mockUser?.id || null
+      })
+      setRequestSuccess(true)
+      setTimeout(() => {
+        setRequestItemName('')
+        setRequestImageUrl('')
+        setRequestSuccess(false)
+        setModalType(null)
+      }, 2000)
+    } catch (err) {
+      setRequestError(err.message || 'Unable to submit request. Please try again.')
+    } finally {
+      setRequestSubmitting(false)
+    }
   }
 
   const handleRestockSubmit = (e) => {
@@ -345,44 +401,131 @@ export default function StorefrontSidebar() {
             <p className="text-sm text-[#6B6B6B] mt-1 mb-5 font-['Inter']">
               Can't find your favorite collectible or item? Tell us what you're looking for and our team will check availability.
             </p>
-            <form onSubmit={handleRequestSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-[#111111] mb-1.5 font-['Inter']">Product Name / Character</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Item or figure name..."
-                  value={requestItemName}
-                  onChange={(e) => setRequestItemName(e.target.value)}
-                  className="sf-input"
-                />
+            {requestSuccess ? (
+              <div className="py-8 text-center space-y-3 sf-animate-fade-in">
+                <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto border border-emerald-200">
+                  <Check size={28} weight="bold" />
+                </div>
+                <h4 className="text-lg font-bold text-[#111111] font-['Syne']">Request Submitted!</h4>
+                <p className="text-sm text-[#6B6B6B] font-['Inter'] max-w-[35ch] mx-auto">
+                  Thanks! We'll check availability and let you know.
+                </p>
               </div>
-              <div>
-                <label className="block text-sm font-semibold text-[#111111] mb-1.5 font-['Inter']">Anime Series (Optional)</label>
-                <input
-                  type="text"
-                  placeholder="Anime series or franchise..."
-                  value={requestAnime}
-                  onChange={(e) => setRequestAnime(e.target.value)}
-                  className="sf-input"
-                />
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setModalType(null)}
-                  className="sf-btn-secondary flex-1"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="sf-btn-primary flex-1"
-                >
-                  Submit Request
-                </button>
-              </div>
-            </form>
+            ) : (
+              <form onSubmit={handleRequestSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-[#111111] mb-1.5 font-['Inter']">
+                    Product Name / Character
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Roronoa Zoro Enma Figure or Demon Slayer Blade..."
+                    value={requestItemName}
+                    onChange={(e) => {
+                      setRequestItemName(e.target.value)
+                      if (requestError) setRequestError('')
+                    }}
+                    className="sf-input"
+                  />
+                  <p className="text-[11px] text-[#6B7280] mt-1 font-['Inter']">
+                    Name of the anime figure, collectible, or apparel you're searching for.
+                  </p>
+                </div>
+
+                {/* Optional Reference Photo Upload */}
+                <div>
+                  <label className="block text-sm font-semibold text-[#111111] mb-1.5 font-['Inter']">
+                    Reference Photo <span className="text-xs font-normal text-[#6B7280]">(Optional)</span>
+                  </label>
+
+                  {requestImageUrl ? (
+                    <div className="relative p-2.5 rounded-[12px] bg-[#F8F8F6] border border-[#E5E5E5] flex items-center gap-3">
+                      <img
+                        src={requestImageUrl}
+                        alt="Reference preview"
+                        className="w-14 h-14 object-cover rounded-[8px] border border-[#E5E5E5] bg-white"
+                      />
+                      <div className="text-xs min-w-0 flex-1">
+                        <p className="font-semibold text-[#111111]">Photo attached</p>
+                        <p className="text-[11px] text-[#6B7280] truncate">{requestImageUrl}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setRequestImageUrl('')}
+                        className="p-1.5 rounded-lg text-[#6B7280] hover:text-[#DC2626] hover:bg-white transition-colors cursor-pointer"
+                        title="Remove photo"
+                      >
+                        <Trash size={16} />
+                      </button>
+                    </div>
+                  ) : (
+                    <label className={`flex flex-col items-center justify-center p-4 rounded-[12px] border-2 border-dashed transition-all cursor-pointer ${
+                      isRequestUploading
+                        ? 'border-[#E5E5E5] bg-[#F8F8F6]'
+                        : 'border-[#E5E5E5] hover:border-[#111111] bg-[#F8F8F6]/50 hover:bg-[#F8F8F6]'
+                    }`}>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/jpg"
+                        onChange={(e) => handleRequestImageChange(e.target.files?.[0])}
+                        disabled={isRequestUploading}
+                        className="hidden"
+                      />
+                      {isRequestUploading ? (
+                        <div className="flex items-center gap-2 text-xs font-semibold text-[#111111]">
+                          <CircleNotch size={18} className="animate-spin text-[#111111]" />
+                          <span>Uploading reference photo...</span>
+                        </div>
+                      ) : (
+                        <div className="text-center space-y-1">
+                          <UploadSimple size={22} className="text-[#6B7280] mx-auto" />
+                          <p className="text-xs font-semibold text-[#111111]">
+                            Click to browse or drag &amp; drop
+                          </p>
+                          <p className="text-[11px] text-[#6B7280]">
+                            Screenshot or photo · JPG, PNG, WebP · max 5MB
+                          </p>
+                        </div>
+                      )}
+                    </label>
+                  )}
+
+                  {requestUploadError && (
+                    <p className="text-xs text-[#DC2626] mt-1.5 flex items-center gap-1 font-medium">
+                      <WarningCircle size={14} /> {requestUploadError}
+                    </p>
+                  )}
+                </div>
+
+                {requestError && (
+                  <div className="p-2.5 rounded-[8px] bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-1.5">
+                    <WarningCircle size={16} className="shrink-0 mt-0.5" />
+                    <span>{requestError}</span>
+                  </div>
+                )}
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRequestError('')
+                      setRequestUploadError('')
+                      setModalType(null)
+                    }}
+                    className="sf-btn-secondary flex-1"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={requestSubmitting || isRequestUploading}
+                    className="sf-btn-primary flex-1 disabled:opacity-50"
+                  >
+                    {requestSubmitting ? 'Submitting...' : 'Submit Request'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

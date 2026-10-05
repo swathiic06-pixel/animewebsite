@@ -1,5 +1,20 @@
 import React, { useState, useRef, useMemo } from 'react'
-import { Sparkles, AlertCircle, Upload, Loader2, X, Link as LinkIcon, Check } from 'lucide-react'
+import { 
+  Sparkles, 
+  AlertCircle, 
+  Upload, 
+  Loader2, 
+  X, 
+  Link as LinkIcon, 
+  Check, 
+  Star, 
+  Trash2, 
+  ArrowLeft, 
+  ArrowRight,
+  GripVertical,
+  Plus,
+  Image as ImageIcon
+} from 'lucide-react'
 import { useApp, generateSlug } from '../../context/AppContext'
 import { uploadImage, isCloudinaryConfigured, PRESETS } from '../../lib/cloudinary'
 
@@ -35,9 +50,28 @@ export default function ProductForm({ initialProduct = null, onSubmit, onCancel,
     sort_order: initialProduct?.sort_order !== undefined ? initialProduct.sort_order : 0,
   })
 
-  // Image upload state
-  const [uploadMode, setUploadMode] = useState('url') // 'url' | 'file'
-  const [isUploading, setIsUploading] = useState(false)
+  // Gallery images state (array of { id, image_url, sort_order, is_cover })
+  const [galleryImages, setGalleryImages] = useState(() => {
+    if (Array.isArray(initialProduct?.images) && initialProduct.images.length > 0) {
+      return [...initialProduct.images].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    }
+    if (initialProduct?.image_url) {
+      return [{
+        id: 'img-' + Date.now(),
+        image_url: initialProduct.image_url,
+        sort_order: 0,
+        is_cover: true
+      }]
+    }
+    return []
+  })
+
+  // Pending asynchronous uploads [{ id, name }]
+  const [uploadingFiles, setUploadingFiles] = useState([])
+  const [urlInput, setUrlInput] = useState('')
+  const [uploadMode, setUploadMode] = useState('file') // 'file' | 'url'
+  const [isDragActive, setIsDragActive] = useState(false)
+  const [draggedIdx, setDraggedIdx] = useState(null)
   const [uploadError, setUploadError] = useState('')
 
   const [confirmReplace, setConfirmReplace] = useState(false)
@@ -83,24 +117,176 @@ export default function ProductForm({ initialProduct = null, onSubmit, onCancel,
     }
   }
 
-  // ── File upload via Cloudinary ────────────────────────────────────────────
-  const handleFileChange = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  const MAX_IMAGES = 8
 
+  // ── Multi-file Upload via Cloudinary ────────────────────────────────────
+  const handleFilesUpload = async (filesList) => {
+    if (!filesList || filesList.length === 0) return
     setUploadError('')
-    setIsUploading(true)
-    setErrors(prev => ({ ...prev, image_url: undefined }))
 
-    try {
-      const { secure_url } = await uploadImage(file, PRESETS.products)
-      setFormData(prev => ({ ...prev, image_url: secure_url }))
-    } catch (err) {
-      setUploadError(err.message)
-    } finally {
-      setIsUploading(false)
-      if (fileInputRef.current) fileInputRef.current.value = ''
+    const currentTotal = galleryImages.length + uploadingFiles.length
+    const availableSlots = MAX_IMAGES - currentTotal
+    if (availableSlots <= 0) {
+      setUploadError(`Maximum cap of ${MAX_IMAGES} photos reached per product.`)
+      return
     }
+
+    const filesToProcess = Array.from(filesList).slice(0, availableSlots)
+    if (filesList.length > availableSlots) {
+      setUploadError(`Only ${availableSlots} more photo(s) could be added (max ${MAX_IMAGES}).`)
+    }
+
+    // Process each file
+    for (const file of filesToProcess) {
+      if (!file.type.match(/^image\/(jpeg|png|webp|jpg)$/i)) {
+        setUploadError(`"${file.name}" is not a supported format. Please use JPG, PNG, or WebP.`)
+        continue
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        setUploadError(`"${file.name}" exceeds 5MB limit. Please compress before uploading.`)
+        continue
+      }
+
+      const tempId = 'up-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7)
+      setUploadingFiles(prev => [...prev, { id: tempId, name: file.name }])
+
+      try {
+        const { secure_url } = await uploadImage(file, PRESETS.products)
+        setGalleryImages(prev => {
+          const hasCover = prev.some(img => img.is_cover)
+          const newImg = {
+            id: 'img-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+            image_url: secure_url,
+            sort_order: prev.length,
+            is_cover: !hasCover // first image uploaded automatically becomes cover
+          }
+          return [...prev, newImg]
+        })
+        setErrors(prev => ({ ...prev, images: undefined, image_url: undefined }))
+      } catch (err) {
+        setUploadError(`Failed to upload "${file.name}": ${err.message}`)
+      } finally {
+        setUploadingFiles(prev => prev.filter(u => u.id !== tempId))
+      }
+    }
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  const handleFileInputChange = (e) => {
+    handleFilesUpload(e.target.files)
+  }
+
+  // ── Drag & Drop Handlers for Dropzone ────────────────────────────────────
+  const handleDropzoneDragOver = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragActive(true)
+  }
+
+  const handleDropzoneDragLeave = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragActive(false)
+  }
+
+  const handleDropzoneDrop = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragActive(false)
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFilesUpload(e.dataTransfer.files)
+    }
+  }
+
+  // ── Add from URL ────────────────────────────────────────────────────────
+  const handleAddUrl = (e) => {
+    if (e) e.preventDefault()
+    const trimmed = urlInput.trim()
+    if (!trimmed) return
+
+    if (galleryImages.length >= MAX_IMAGES) {
+      setUploadError(`Maximum of ${MAX_IMAGES} photos reached per product.`)
+      return
+    }
+
+    setGalleryImages(prev => {
+      const hasCover = prev.some(img => img.is_cover)
+      return [
+        ...prev,
+        {
+          id: 'img-url-' + Date.now(),
+          image_url: trimmed,
+          sort_order: prev.length,
+          is_cover: !hasCover
+        }
+      ]
+    })
+    setUrlInput('')
+    setErrors(prev => ({ ...prev, images: undefined, image_url: undefined }))
+  }
+
+  // ── Set as Cover ────────────────────────────────────────────────────────
+  const handleSetCover = (targetIdx) => {
+    setGalleryImages(prev => prev.map((img, idx) => ({
+      ...img,
+      is_cover: idx === targetIdx
+    })))
+    setErrors(prev => ({ ...prev, images: undefined }))
+  }
+
+  // ── Delete Image with confirmation ──────────────────────────────────────
+  const handleDeleteImage = (targetIdx) => {
+    const target = galleryImages[targetIdx]
+    if (galleryImages.length === 1) {
+      if (!window.confirm('This is the only photo for this product. Products require at least one cover image. Are you sure you want to remove it?')) {
+        return
+      }
+    } else if (target?.is_cover) {
+      if (!window.confirm('This is currently the cover photo. Removing it will assign another photo as the cover. Continue?')) {
+        return
+      }
+    }
+
+    setGalleryImages(prev => {
+      const filtered = prev.filter((_, idx) => idx !== targetIdx)
+      if (target?.is_cover && filtered.length > 0) {
+        filtered[0].is_cover = true
+      }
+      return filtered.map((img, idx) => ({ ...img, sort_order: idx }))
+    })
+  }
+
+  // ── Reorder Images (Move Left / Right) ───────────────────────────────────
+  const handleMoveImage = (fromIdx, toIdx) => {
+    if (toIdx < 0 || toIdx >= galleryImages.length) return
+    setGalleryImages(prev => {
+      const updated = [...prev]
+      const [moved] = updated.splice(fromIdx, 1)
+      updated.splice(toIdx, 0, moved)
+      return updated.map((img, idx) => ({ ...img, sort_order: idx }))
+    })
+  }
+
+  // ── Drag & Drop Reorder Handlers for Thumbnails ─────────────────────────
+  const handleThumbnailDragStart = (e, index) => {
+    setDraggedIdx(index)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  const handleThumbnailDragOver = (e) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+  }
+
+  const handleThumbnailDrop = (e, index) => {
+    e.preventDefault()
+    if (draggedIdx !== null && draggedIdx !== index) {
+      handleMoveImage(draggedIdx, index)
+    }
+    setDraggedIdx(null)
   }
 
   const validate = () => {
@@ -109,7 +295,11 @@ export default function ProductForm({ initialProduct = null, onSubmit, onCancel,
     if (!formData.price || isNaN(formData.price) || Number(formData.price) < 0) {
       newErrors.price = 'Valid price is required'
     }
-    if (!formData.image_url.trim()) newErrors.image_url = 'Image URL is required — upload a photo or paste a URL'
+    if (galleryImages.length === 0 && uploadingFiles.length === 0) {
+      newErrors.images = 'At least one product photo (the cover image) is required'
+    } else if (galleryImages.length > 0 && !galleryImages.some(img => img.is_cover)) {
+      newErrors.images = 'Please designate one photo as the Cover Image'
+    }
     if (collisionWarning && !confirmReplace) {
       newErrors.placement = 'Please confirm replacing the currently featured product before saving'
     }
@@ -118,7 +308,7 @@ export default function ProductForm({ initialProduct = null, onSubmit, onCancel,
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    if (isUploading) return
+    if (uploadingFiles.length > 0) return
     const errs = validate()
     if (Object.keys(errs).length > 0) {
       setErrors(errs)
@@ -133,10 +323,15 @@ export default function ProductForm({ initialProduct = null, onSubmit, onCancel,
     const selectedCat = categories.find(c => c.id === formData.category_id || c.name === formData.category)
     const catId = selectedCat?.id || formData.category_id || null
     const catName = selectedCat?.name || formData.category || 'General'
-    const catSlug = selectedCat?.slug || generateSlug(catName)
+
+    // Determine the primary cover image URL
+    const coverImage = galleryImages.find(img => img.is_cover) || galleryImages[0]
+    const finalCoverUrl = coverImage?.image_url || formData.image_url || ''
 
     onSubmit({
       ...formData,
+      image_url: finalCoverUrl,
+      images: galleryImages,
       category_id: catId,
       category: catName,
       price: parseFloat(formData.price),
@@ -366,27 +561,24 @@ export default function ProductForm({ initialProduct = null, onSubmit, onCancel,
         )}
       </div>
 
-      {/* ── Product Image ───────────────────────────────────────────────────── */}
+      {/* ── Multi-Image Product Gallery ────────────────────────────────────── */}
       <div className="p-4 rounded-xl bg-[#F5F6F8] border border-[#EDEDED] space-y-3">
         <div className="flex items-center justify-between">
-          <label className="text-xs font-semibold text-[#111827]">
-            Product Image <span className="text-rose-500">*</span>
-          </label>
+          <div>
+            <label className="text-xs font-semibold text-[#111827] flex items-center gap-1.5">
+              <span>Product Gallery</span>
+              <span className="text-rose-500">*</span>
+              <span className="text-[11px] font-normal text-[#6B7280]">
+                ({galleryImages.length}/{MAX_IMAGES} photos)
+              </span>
+            </label>
+            <p className="text-[11px] text-[#6B7280] mt-0.5">
+              Buyers can browse through these photos. Click the star on any photo to set it as the cover.
+            </p>
+          </div>
           
-          {/* Toggle between upload and URL modes — Blue accent for active */}
+          {/* Toggle between Upload and URL modes */}
           <div className="flex items-center gap-1 bg-white border border-[#EDEDED] rounded-lg p-0.5">
-            <button
-              type="button"
-              onClick={() => setUploadMode('url')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors ${
-                uploadMode === 'url'
-                  ? 'bg-[#3B82F6] text-white shadow-2xs'
-                  : 'text-[#6B7280] hover:text-[#111827]'
-              }`}
-            >
-              <LinkIcon className="w-3 h-3" />
-              URL
-            </button>
             <button
               type="button"
               onClick={() => setUploadMode('file')}
@@ -399,11 +591,23 @@ export default function ProductForm({ initialProduct = null, onSubmit, onCancel,
               <Upload className="w-3 h-3" />
               Upload
             </button>
+            <button
+              type="button"
+              onClick={() => setUploadMode('url')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors ${
+                uploadMode === 'url'
+                  ? 'bg-[#3B82F6] text-white shadow-2xs'
+                  : 'text-[#6B7280] hover:text-[#111827]'
+              }`}
+            >
+              <LinkIcon className="w-3 h-3" />
+              URL
+            </button>
           </div>
         </div>
 
+        {/* Upload Mode UI */}
         {uploadMode === 'file' ? (
-          /* ── File Upload ── */
           <div className="space-y-2">
             {!isCloudinaryConfigured && (
               <div className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
@@ -412,90 +616,193 @@ export default function ProductForm({ initialProduct = null, onSubmit, onCancel,
               </div>
             )}
 
-            <label className={`flex flex-col items-center justify-center w-full p-4 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${
-              isUploading ? 'border-[#EDEDED] bg-gray-50' : 'border-[#D1D5DB] hover:border-[#3B82F6] bg-white'
-            }`}>
+            <label
+              onDragOver={handleDropzoneDragOver}
+              onDragLeave={handleDropzoneDragLeave}
+              onDrop={handleDropzoneDrop}
+              className={`flex flex-col items-center justify-center w-full p-4 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${
+                isDragActive
+                  ? 'border-[#3B82F6] bg-blue-50/50'
+                  : galleryImages.length >= MAX_IMAGES
+                  ? 'border-[#EDEDED] bg-gray-50 cursor-not-allowed opacity-60'
+                  : 'border-[#D1D5DB] hover:border-[#3B82F6] bg-white'
+              }`}
+            >
               <input
                 ref={fileInputRef}
                 type="file"
+                multiple
                 accept="image/png,image/jpeg,image/webp,image/jpg"
-                onChange={handleFileChange}
-                disabled={isUploading || !isCloudinaryConfigured}
+                onChange={handleFileInputChange}
+                disabled={galleryImages.length >= MAX_IMAGES || !isCloudinaryConfigured}
                 className="hidden"
               />
-              {isUploading ? (
-                <div className="flex items-center gap-2 text-xs font-semibold text-[#111827]">
-                  <Loader2 className="w-4 h-4 animate-spin text-[#3B82F6]" />
-                  <span>Uploading to Cloudinary...</span>
-                </div>
-              ) : (
-                <div className="text-center space-y-1">
-                  <Upload className="w-5 h-5 text-[#6B7280] mx-auto" />
-                  <p className="text-xs text-[#111827] font-medium">
-                    Click to browse or drag &amp; drop
-                  </p>
-                  <p className="text-[11px] text-[#9CA3AF]">
-                    JPG, PNG, WebP · max 5 MB
-                  </p>
-                </div>
-              )}
+              <div className="text-center space-y-1">
+                <Upload className="w-5 h-5 text-[#6B7280] mx-auto" />
+                <p className="text-xs text-[#111827] font-medium">
+                  {galleryImages.length >= MAX_IMAGES
+                    ? `Maximum ${MAX_IMAGES} photos reached`
+                    : 'Click to select multiple photos or drag & drop here'}
+                </p>
+                <p className="text-[11px] text-[#9CA3AF]">
+                  Select up to 8 images at once · JPG, PNG, WebP · max 5 MB each
+                </p>
+              </div>
             </label>
-
-            {uploadError && (
-              <p className="text-rose-500 text-xs flex items-start gap-1.5 font-medium">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                <span>{uploadError}</span>
-              </p>
-            )}
           </div>
         ) : (
-          /* ── URL Input ── */
-          <div className="relative">
-            <input
-              type="url"
-              name="image_url"
-              value={formData.image_url}
-              onChange={handleChange}
-              placeholder="https://res.cloudinary.com/... or any image URL"
-              className="w-full bg-white border border-[#EDEDED] rounded-xl pl-9 pr-4 py-2 text-sm text-[#111827] placeholder-[#9CA3AF] focus:outline-none focus:border-[#3B82F6] focus:ring-1 focus:ring-[#3B82F6]"
-            />
-            <LinkIcon className="w-3.5 h-3.5 text-[#9CA3AF] absolute left-3 top-3" />
+          /* URL input mode */
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <input
+                type="url"
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleAddUrl(e) }}
+                placeholder="Paste image URL (https://...)..."
+                disabled={galleryImages.length >= MAX_IMAGES}
+                className="w-full bg-white border border-[#EDEDED] rounded-xl pl-9 pr-4 py-2 text-sm text-[#111827] placeholder-[#9CA3AF] focus:outline-none focus:border-[#3B82F6] focus:ring-1 focus:ring-[#3B82F6]"
+              />
+              <LinkIcon className="w-3.5 h-3.5 text-[#9CA3AF] absolute left-3 top-3" />
+            </div>
+            <button
+              type="button"
+              onClick={handleAddUrl}
+              disabled={!urlInput.trim() || galleryImages.length >= MAX_IMAGES}
+              className="px-4 py-2 rounded-xl bg-[#3B82F6] hover:bg-blue-600 text-white text-xs font-semibold shadow-2xs transition-colors disabled:opacity-50 flex items-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add URL</span>
+            </button>
           </div>
         )}
 
-        {errors.image_url && (
-          <p className="text-rose-500 text-xs flex items-center gap-1 font-medium">
-            <AlertCircle className="w-3 h-3" /> {errors.image_url}
+        {/* Upload error display */}
+        {uploadError && (
+          <p className="text-rose-500 text-xs flex items-start gap-1.5 font-medium">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span>{uploadError}</span>
           </p>
         )}
 
-        {/* Image preview */}
-        {formData.image_url && (
-          <div className="flex items-center gap-3 p-2.5 rounded-xl bg-white border border-[#EDEDED] shadow-2xs">
-            <div className="relative w-14 h-14 flex-shrink-0">
-              <img
-                src={formData.image_url}
-                alt="Preview"
-                className="w-14 h-14 object-cover rounded-lg bg-gray-50 border border-[#EDEDED]"
-                onError={(e) => { e.target.style.display = 'none' }}
-              />
-              <button
-                type="button"
-                onClick={() => setFormData(prev => ({ ...prev, image_url: '' }))}
-                className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-rose-500 rounded-full flex items-center justify-center text-white hover:bg-rose-600 transition-colors shadow-2xs"
-                title="Remove image"
-              >
-                <X className="w-2.5 h-2.5" />
-              </button>
+        {errors.images && (
+          <p className="text-rose-500 text-xs flex items-center gap-1 font-medium">
+            <AlertCircle className="w-3.5 h-3.5" /> {errors.images}
+          </p>
+        )}
+
+        {/* Uploading queue indicators */}
+        {uploadingFiles.length > 0 && (
+          <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl space-y-1.5">
+            <div className="flex items-center gap-2 text-xs font-semibold text-[#1D4ED8]">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <span>Uploading {uploadingFiles.length} photo(s) to Cloudinary...</span>
             </div>
-            <div className="text-xs text-[#6B7280] min-w-0">
-              <p className="text-[#111827] font-semibold">Image Preview</p>
-              <p className="truncate text-[11px] text-[#9CA3AF]">{formData.image_url}</p>
-              {formData.image_url.includes('res.cloudinary.com') && (
-                <p className="text-emerald-600 text-[10px] font-semibold mt-0.5 flex items-center gap-1">
-                  <Check className="w-3 h-3" /> Cloudinary CDN
-                </p>
-              )}
+            <div className="flex flex-wrap gap-2 text-[11px] text-[#2563EB]">
+              {uploadingFiles.map(u => (
+                <span key={u.id} className="bg-white/80 px-2 py-0.5 rounded-md border border-blue-200 truncate max-w-[200px]">
+                  {u.name}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Thumbnail Grid with Controls ──────────────────────────────────── */}
+        {galleryImages.length > 0 && (
+          <div className="space-y-2 pt-1">
+            <div className="flex items-center justify-between text-[11px] text-[#6B7280]">
+              <span>Gallery Preview &amp; Order:</span>
+              <span>Drag to reorder or use arrows</span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {galleryImages.map((img, idx) => (
+                <div
+                  key={img.id || `${img.image_url}-${idx}`}
+                  draggable
+                  onDragStart={(e) => handleThumbnailDragStart(e, idx)}
+                  onDragOver={handleThumbnailDragOver}
+                  onDrop={(e) => handleThumbnailDrop(e, idx)}
+                  className={`group relative rounded-xl border overflow-hidden bg-white shadow-2xs transition-all ${
+                    img.is_cover
+                      ? 'border-[#3B82F6] ring-2 ring-[#3B82F6]/30'
+                      : 'border-[#EDEDED] hover:border-gray-400'
+                  }`}
+                >
+                  {/* Thumbnail Image */}
+                  <div className="aspect-square w-full bg-gray-100 relative overflow-hidden">
+                    <img
+                      src={img.image_url}
+                      alt={`Photo ${idx + 1}`}
+                      className="w-full h-full object-cover"
+                      onError={(e) => { e.target.style.display = 'none' }}
+                    />
+
+                    {/* Drag Handle indicator */}
+                    <div className="absolute top-1.5 left-1.5 p-1 rounded-md bg-black/60 text-white opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing">
+                      <GripVertical className="w-3 h-3" />
+                    </div>
+
+                    {/* Cover Badge */}
+                    {img.is_cover ? (
+                      <span className="absolute top-1.5 right-1.5 flex items-center gap-1 bg-[#3B82F6] text-white text-[10px] font-bold px-2 py-0.5 rounded-md shadow-sm">
+                        <Star className="w-2.5 h-2.5 fill-white" />
+                        COVER
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleSetCover(idx)}
+                        className="absolute top-1.5 right-1.5 flex items-center gap-1 bg-black/60 hover:bg-[#3B82F6] text-white text-[10px] font-medium px-2 py-0.5 rounded-md opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                        title="Set as Cover Image"
+                      >
+                        <Star className="w-2.5 h-2.5" />
+                        Set Cover
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Thumbnail Bottom Controls */}
+                  <div className="p-2 bg-white flex items-center justify-between border-t border-[#EDEDED] text-[11px]">
+                    <span className="text-[#9CA3AF] font-mono font-medium">#{idx + 1}</span>
+
+                    <div className="flex items-center gap-1">
+                      {/* Move left */}
+                      <button
+                        type="button"
+                        disabled={idx === 0}
+                        onClick={() => handleMoveImage(idx, idx - 1)}
+                        className="p-1 rounded text-[#6B7280] hover:text-[#111827] hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title="Move photo earlier"
+                      >
+                        <ArrowLeft className="w-3 h-3" />
+                      </button>
+
+                      {/* Move right */}
+                      <button
+                        type="button"
+                        disabled={idx === galleryImages.length - 1}
+                        onClick={() => handleMoveImage(idx, idx + 1)}
+                        className="p-1 rounded text-[#6B7280] hover:text-[#111827] hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title="Move photo later"
+                      >
+                        <ArrowRight className="w-3 h-3" />
+                      </button>
+
+                      {/* Delete */}
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteImage(idx)}
+                        className="p-1 rounded text-rose-500 hover:text-rose-700 hover:bg-rose-50 transition-colors ml-1"
+                        title="Delete photo"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -527,13 +834,13 @@ export default function ProductForm({ initialProduct = null, onSubmit, onCancel,
         </button>
         <button
           type="submit"
-          disabled={isSubmitting || isUploading}
+          disabled={isSubmitting || uploadingFiles.length > 0}
           className="px-5 py-2.5 rounded-xl bg-[#3B82F6] hover:bg-blue-600 text-white text-xs font-bold shadow-2xs transition-colors disabled:opacity-50 flex items-center gap-2"
         >
-          {isUploading ? (
+          {uploadingFiles.length > 0 ? (
             <>
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              <span>Uploading...</span>
+              <span>Uploading ({uploadingFiles.length})...</span>
             </>
           ) : (
             <span>{initialProduct ? 'Update Product' : 'Save Product'}</span>

@@ -9,7 +9,20 @@ const ORDERS_STORAGE_KEY = 'animemax_orders_v1'
 const PROFILES_STORAGE_KEY = 'animemax_profiles_v1'
 const MOCK_USER_STORAGE_KEY = 'animemax_mock_user_v1'
 const BANNERS_STORAGE_KEY = 'animemax_banners_v1'
-const CATEGORIES_STORAGE_KEY = 'animemax_categories_v1'
+const REQUESTS_STORAGE_KEY = 'animemax_requests_v1'
+
+export function generateUUID() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    try {
+      return crypto.randomUUID()
+    } catch {}
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
 
 export function generateSlug(text) {
   return (text || '')
@@ -135,6 +148,15 @@ export function AppProvider({ children }) {
       return {}
     } catch {
       return {}
+    }
+  })
+
+  const [requests, setRequests] = useState(() => {
+    try {
+      const saved = localStorage.getItem(REQUESTS_STORAGE_KEY)
+      return saved ? JSON.parse(saved) : []
+    } catch {
+      return []
     }
   })
 
@@ -287,6 +309,15 @@ export function AppProvider({ children }) {
     }
   }, [categories])
 
+  // Sync requests to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(requests))
+    } catch (e) {
+      console.error(e)
+    }
+  }, [requests])
+
   const categoriesTableAvailableRef = useRef(true)
 
   // Dedicated function to fetch/refresh categories from Supabase
@@ -386,6 +417,70 @@ export function AppProvider({ children }) {
     }
   }
 
+  // Dedicated function to fetch/refresh product gallery images from Supabase
+  const refreshProductImages = async () => {
+    if (!isSupabaseConfigured) return
+    try {
+      const client = supabaseAnon || supabase
+      const { data: remoteImages, error: imgErr } = await client
+        .from('product_images')
+        .select('*')
+        .order('sort_order', { ascending: true })
+
+      if (!imgErr && Array.isArray(remoteImages)) {
+        const imagesByProduct = new Map()
+        remoteImages.forEach(img => {
+          if (!imagesByProduct.has(img.product_id)) {
+            imagesByProduct.set(img.product_id, [])
+          }
+          imagesByProduct.get(img.product_id).push(img)
+        })
+
+        setProducts(prevProducts => {
+          const updated = prevProducts.map(p => {
+            const imgs = imagesByProduct.get(p.id) || []
+            if (imgs.length === 0) return p
+            const cover = imgs.find(i => i.is_cover) || imgs[0]
+            return {
+              ...p,
+              image_url: cover?.image_url || p.image_url,
+              images: imgs
+            }
+          })
+          try {
+            localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(updated))
+          } catch {}
+          return updated
+        })
+      }
+    } catch (err) {
+      console.warn('Failed to refresh product images:', err)
+    }
+  }
+
+  // Dedicated function to fetch/refresh buyer product requests from Supabase
+  const refreshRequests = async () => {
+    if (!isSupabaseConfigured) return
+    try {
+      const client = supabaseAnon || supabase
+      const { data: remoteRequests, error } = await client
+        .from('product_requests')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (!error && Array.isArray(remoteRequests)) {
+        setRequests(remoteRequests)
+        try {
+          localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(remoteRequests))
+        } catch {}
+      } else if (error) {
+        console.warn('Product requests fetch warning:', error.message)
+      }
+    } catch (err) {
+      console.warn('Failed to refresh requests:', err)
+    }
+  }
+
   // Load from Supabase if configured
   useEffect(() => {
     if (!isSupabaseConfigured) return
@@ -399,10 +494,36 @@ export function AppProvider({ children }) {
           .select('*')
           .order('created_at', { ascending: false })
 
+        // Also fetch product images gallery
+        const { data: remoteImages, error: imgErr } = await client
+          .from('product_images')
+          .select('*')
+          .order('sort_order', { ascending: true })
+
+        const imagesByProduct = new Map()
+        if (!imgErr && Array.isArray(remoteImages)) {
+          remoteImages.forEach(img => {
+            if (!imagesByProduct.has(img.product_id)) {
+              imagesByProduct.set(img.product_id, [])
+            }
+            imagesByProduct.get(img.product_id).push(img)
+          })
+        }
+
         if (!prodErr && Array.isArray(remoteProducts)) {
-          const cleanRemote = remoteProducts.filter(
-            p => p && p.id && !p.id.startsWith('hw-') && !p.id.startsWith('prod-00')
-          )
+          const cleanRemote = remoteProducts
+            .filter(p => p && p.id && !p.id.startsWith('hw-') && !p.id.startsWith('prod-00'))
+            .map(p => {
+              const imgs = imagesByProduct.get(p.id) || []
+              const cover = imgs.find(i => i.is_cover) || imgs[0]
+              const coverUrl = cover?.image_url || p.image_url || ''
+              return {
+                ...p,
+                image_url: coverUrl,
+                images: imgs.length > 0 ? imgs : (coverUrl ? [{ id: `legacy-${p.id}`, product_id: p.id, image_url: coverUrl, sort_order: 0, is_cover: true }] : [])
+              }
+            })
+
           // Preserve any locally added products that are not yet on remote Supabase
           setProducts(prevLocal => {
             const remoteMap = new Map(cleanRemote.map(p => [p.id, p]))
@@ -434,6 +555,7 @@ export function AppProvider({ children }) {
         await refreshOrders()
         await refreshBanners()
         await refreshCategories()
+        await refreshRequests()
 
       } catch (err) {
         console.warn('Supabase fetch failed, falling back to local store', err)
@@ -482,12 +604,23 @@ export function AppProvider({ children }) {
           const { data } = await client.from('products').select('*').order('created_at', { ascending: false })
           if (Array.isArray(data)) {
             const clean = data.filter(p => p && p.id && !p.id.startsWith('hw-') && !p.id.startsWith('prod-00'))
-            setProducts(clean)
-            try {
-              localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(clean))
-            } catch {}
+            setProducts(prev => {
+              const currentImagesMap = new Map(prev.map(p => [p.id, p.images]))
+              return clean.map(p => ({
+                ...p,
+                images: currentImagesMap.get(p.id) || p.images || []
+              }))
+            })
+            await refreshProductImages()
           }
         } catch {}
+      })
+      .subscribe()
+
+    const imagesChannel = client
+      .channel('animemax-live-product-images')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'product_images' }, async () => {
+        await refreshProductImages()
       })
       .subscribe()
 
@@ -498,10 +631,19 @@ export function AppProvider({ children }) {
       })
       .subscribe()
 
+    const requestsChannel = client
+      .channel('animemax-live-requests')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'product_requests' }, async () => {
+        await refreshRequests()
+      })
+      .subscribe()
+
     return () => {
       try {
         client.removeChannel(productChannel)
+        client.removeChannel(imagesChannel)
         client.removeChannel(orderChannel)
+        client.removeChannel(requestsChannel)
       } catch {}
     }
   }, [])
@@ -665,13 +807,19 @@ export function AppProvider({ children }) {
       if (matchCat) categoryId = matchCat.id
     }
 
-    // Strip client-only or non-existent columns (e.g. category_slug)
-    const { category_slug, ...cleanProductData } = productData
+    // Extract images if provided
+    const rawImages = Array.isArray(productData.images) ? productData.images : []
+    const coverFromImages = rawImages.find(img => img.is_cover) || rawImages[0]
+    const resolvedImageUrl = coverFromImages?.image_url || productData.image_url || ''
+
+    // Strip client-only or non-existent columns (category_slug, images)
+    const { category_slug, images, ...cleanProductData } = productData
 
     const newProduct = {
       id: generateUUID(),
       created_at: new Date().toISOString(),
       ...cleanProductData,
+      image_url: resolvedImageUrl,
       in_stock: inStock,
       stock: stockUnits,
       price: parseFloat(productData.price) || 0,
@@ -680,6 +828,29 @@ export function AppProvider({ children }) {
       category_id: categoryId,
       category: categoryName,
     }
+
+    let imageRows = []
+    if (rawImages.length > 0) {
+      imageRows = rawImages.map((img, idx) => ({
+        product_id: newProduct.id,
+        image_url: typeof img === 'string' ? img : img.image_url,
+        sort_order: (img.sort_order !== undefined && img.sort_order !== null) ? Number(img.sort_order) : idx,
+        is_cover: typeof img === 'object' && img.is_cover !== undefined ? Boolean(img.is_cover) : (idx === 0)
+      }))
+    } else if (resolvedImageUrl) {
+      imageRows = [{
+        product_id: newProduct.id,
+        image_url: resolvedImageUrl,
+        sort_order: 0,
+        is_cover: true
+      }]
+    }
+
+    if (imageRows.length > 0 && !imageRows.some(i => i.is_cover)) {
+      imageRows[0].is_cover = true
+    }
+
+    newProduct.images = imageRows
 
     // Resolve any placement collisions first
     const resolvedList = await resolvePlacements(products, newProduct.id, section)
@@ -695,18 +866,34 @@ export function AppProvider({ children }) {
     // 2. Persist to Supabase
     if (isSupabaseConfigured && supabase) {
       try {
-        const { data, error } = await supabase.from('products').insert([newProduct]).select()
+        const { data, error } = await supabase.from('products').insert([cleanProductData ? {
+          id: newProduct.id,
+          name: newProduct.name,
+          description: newProduct.description || '',
+          price: newProduct.price,
+          category: newProduct.category || 'General',
+          series: newProduct.series || null,
+          edition: newProduct.edition || null,
+          color: newProduct.color || null,
+          hw_num: newProduct.hw_num !== undefined ? newProduct.hw_num : null,
+          image_url: newProduct.image_url,
+          stock: newProduct.stock,
+          in_stock: newProduct.in_stock,
+          display_section: newProduct.display_section,
+          sort_order: newProduct.sort_order,
+          category_id: newProduct.category_id,
+          created_at: newProduct.created_at
+        } : newProduct]).select()
+
         if (!error && data && data[0]) {
-          const finalItem = { ...newProduct, ...data[0] }
+          const finalItem = { ...newProduct, ...data[0], images: imageRows }
           const finalList = [finalItem, ...resolvedList]
           setProducts(finalList)
           try {
             localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(finalList))
           } catch (e) {}
-          return finalItem
         } else if (error) {
-          // If columns don't exist yet on Supabase schema (e.g. display_section, sort_order, category_id),
-          // fallback to inserting ONLY the supported core database fields:
+          // If columns don't exist yet on Supabase schema, fallback to inserting core fields:
           const coreFallback = {
             id: newProduct.id,
             name: newProduct.name,
@@ -722,17 +909,15 @@ export function AppProvider({ children }) {
             in_stock: newProduct.in_stock,
             created_at: newProduct.created_at
           }
-          const { data: fbData, error: fbErr } = await supabase.from('products').insert([coreFallback]).select()
-          if (!fbErr && fbData?.[0]) {
-            const returned = { ...newProduct, ...fbData[0], display_section: section, sort_order: sortOrder, category_id: categoryId }
-            const finalList = [returned, ...resolvedList]
-            setProducts(finalList)
-            try {
-              localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(finalList))
-            } catch (e) {}
-            return returned
-          } else {
-            console.warn('Supabase product insert notice (persisted in localStorage):', error.message || fbErr?.message)
+          await supabase.from('products').insert([coreFallback])
+        }
+
+        // Insert gallery images into product_images table
+        if (imageRows.length > 0) {
+          try {
+            await supabase.from('product_images').insert(imageRows)
+          } catch (imgErr) {
+            console.warn('Supabase product_images insert warning:', imgErr)
           }
         }
       } catch (err) {
@@ -745,20 +930,51 @@ export function AppProvider({ children }) {
 
 
   const updateProduct = async (id, updates) => {
+    const rawImages = Array.isArray(updates.images) ? updates.images : null
+    let imageRows = null
+    let coverUrl = updates.image_url
+
+    if (rawImages) {
+      imageRows = rawImages.map((img, idx) => ({
+        product_id: id,
+        image_url: typeof img === 'string' ? img : img.image_url,
+        sort_order: (img.sort_order !== undefined && img.sort_order !== null) ? Number(img.sort_order) : idx,
+        is_cover: typeof img === 'object' && img.is_cover !== undefined ? Boolean(img.is_cover) : (idx === 0)
+      }))
+      if (imageRows.length > 0 && !imageRows.some(i => i.is_cover)) {
+        imageRows[0].is_cover = true
+      }
+      const cover = imageRows.find(i => i.is_cover) || imageRows[0]
+      if (cover?.image_url) {
+        coverUrl = cover.image_url
+      }
+    }
+
     const sanitized = {
       ...updates,
       price: updates.price !== undefined ? parseFloat(updates.price) : undefined,
       stock: updates.stock !== undefined ? parseInt(updates.stock) : undefined,
       sort_order: updates.sort_order !== undefined ? parseInt(updates.sort_order) || 0 : undefined,
     }
+    if (coverUrl !== undefined) {
+      sanitized.image_url = coverUrl
+    }
     delete sanitized.category_slug
+    delete sanitized.images
 
     let currentList = products
     if (sanitized.display_section) {
       currentList = await resolvePlacements(products, id, sanitized.display_section)
     }
 
-    const updatedList = currentList.map(p => (p.id === id ? { ...p, ...sanitized } : p))
+    const updatedList = currentList.map(p => {
+      if (p.id !== id) return p
+      const updated = { ...p, ...sanitized }
+      if (imageRows) {
+        updated.images = imageRows
+      }
+      return updated
+    })
     setProducts(updatedList)
     try {
       localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(updatedList))
@@ -772,6 +988,17 @@ export function AppProvider({ children }) {
           const { display_section, sort_order, category_id, ...fallbackUpdates } = sanitized
           if (Object.keys(fallbackUpdates).length > 0) {
             await supabase.from('products').update(fallbackUpdates).eq('id', id)
+          }
+        }
+
+        if (imageRows) {
+          try {
+            await supabase.from('product_images').delete().eq('product_id', id)
+            if (imageRows.length > 0) {
+              await supabase.from('product_images').insert(imageRows)
+            }
+          } catch (imgErr) {
+            console.warn('Failed to update product_images in Supabase:', imgErr)
           }
         }
       } catch (err) {
@@ -819,18 +1046,111 @@ export function AppProvider({ children }) {
     }
   }
 
-  // Helper to ensure valid RFC4122 v4 UUID for Supabase
-  const generateUUID = () => {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-      try {
-        return crypto.randomUUID()
-      } catch {}
+  // Product Requests Operations
+  const submitProductRequest = async ({ product_name, reference_image_url, user_id }) => {
+    const trimmedName = (product_name || '').trim()
+    const trimmedImg = (reference_image_url || '').trim()
+
+    if (!trimmedName && !trimmedImg) {
+      throw new Error('Please provide a product/character name or a reference photo.')
     }
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-      const r = (Math.random() * 16) | 0
-      const v = c === 'x' ? r : (r & 0x3) | 0x8
-      return v.toString(16)
+
+    const newRequest = {
+      id: generateUUID(),
+      product_name: trimmedName || null,
+      reference_image_url: trimmedImg || null,
+      user_id: user_id || null,
+      status: 'new',
+      created_at: new Date().toISOString()
+    }
+
+    // Optimistically update React state & localStorage
+    setRequests(prev => [newRequest, ...prev])
+    try {
+      localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify([newRequest, ...requests]))
+    } catch {}
+
+    if (isSupabaseConfigured && supabase) {
+      const client = supabaseAnon || supabase
+      const { data, error } = await client
+        .from('product_requests')
+        .insert([{
+          id: newRequest.id,
+          product_name: newRequest.product_name,
+          reference_image_url: newRequest.reference_image_url,
+          user_id: newRequest.user_id,
+          status: 'new',
+          created_at: newRequest.created_at
+        }])
+        .select()
+
+      if (error) {
+        console.error('Supabase request insert error:', error)
+        // Rollback on failure
+        setRequests(prev => prev.filter(r => r.id !== newRequest.id))
+        throw new Error(error.message || 'Failed to submit request')
+      }
+
+      if (data && data[0]) {
+        setRequests(prev => [data[0], ...prev.filter(r => r.id !== newRequest.id)])
+        return data[0]
+      }
+    }
+
+    return newRequest
+  }
+
+  const updateRequestStatus = async (id, status) => {
+    const valid = ['new', 'reviewing', 'fulfilled', 'declined']
+    if (!valid.includes(status)) {
+      throw new Error(`Invalid status: ${status}`)
+    }
+
+    // Optimistic update
+    setRequests(prev => {
+      const updated = prev.map(r => r.id === id ? { ...r, status } : r)
+      try {
+        localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(updated))
+      } catch {}
+      return updated
     })
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const client = supabaseAnon || supabase
+        const { error } = await client
+          .from('product_requests')
+          .update({ status })
+          .eq('id', id)
+
+        if (error) {
+          console.error('Failed to update request status in Supabase:', error)
+          await refreshRequests()
+        }
+      } catch (err) {
+        console.error('Error updating request status:', err)
+        await refreshRequests()
+      }
+    }
+  }
+
+  const deleteRequest = async (id) => {
+    setRequests(prev => {
+      const updated = prev.filter(r => r.id !== id)
+      try {
+        localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(updated))
+      } catch {}
+      return updated
+    })
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const client = supabaseAnon || supabase
+        await client.from('product_requests').delete().eq('id', id)
+      } catch (err) {
+        console.error('Failed to delete request from Supabase:', err)
+      }
+    }
   }
 
   // Order Operations
@@ -1040,6 +1360,12 @@ export function AppProvider({ children }) {
         updateBanner,
         resetBanner,
         refreshBanners,
+        refreshProductImages,
+        requests,
+        submitProductRequest,
+        updateRequestStatus,
+        deleteRequest,
+        refreshRequests,
 
       }}
     >

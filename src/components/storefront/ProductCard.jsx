@@ -6,12 +6,14 @@ import { StockBadge, CategoryBadge } from '../common/Badge'
 import { useCart } from '../../context/CartContext'
 import { handleImageError } from '../../utils/imageFallback'
 import { cldUrl } from '../../lib/cloudinary'
+import { getProductCoverImage } from '../../utils/productImages'
 
 export default function ProductCard({ product }) {
   const { addToCart, items } = useCart()
   const isSoldOut = product.in_stock === false || (product.stock !== undefined && product.stock !== null && product.stock !== '' && Number(product.stock) <= 0)
   const cartItem = items.find((i) => i.id === product.id)
   const isAlreadyInCart = Boolean(cartItem)
+  const coverImageUrl = getProductCoverImage(product)
 
   const handleQuickAdd = (e) => {
     e.preventDefault()
@@ -26,15 +28,15 @@ export default function ProductCard({ product }) {
 
       {/* Product Image & Badges */}
       <Link to={`/product/${product.id}`} className="relative aspect-[4/5] overflow-hidden bg-[#18181b]/5 flex items-center justify-center p-3 block group">
-        {product.image_url && (
+        {coverImageUrl && (
           <div
             className="absolute inset-0 bg-cover bg-center blur-md opacity-25 scale-125 pointer-events-none"
-            style={{ backgroundImage: `url(${product.image_url})` }}
+            style={{ backgroundImage: `url(${coverImageUrl})` }}
             aria-hidden="true"
           />
         )}
         <img
-          src={cldUrl(product.image_url, { width: 400, height: 500, crop: 'limit' })}
+          src={cldUrl(coverImageUrl, { width: 400, height: 500, crop: 'limit' })}
           alt={product.name}
           loading="lazy"
           onError={handleImageError}
