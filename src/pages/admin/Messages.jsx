@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { 
   MessageSquare, 
   Send, 
@@ -15,8 +15,14 @@ import { OWNER_UPI_ID, OWNER_WHATSAPP } from '../../lib/clerkClient'
 import { formatPrice } from '../../utils/formatPrice'
 
 export default function Messages() {
-  const { orders } = useApp()
+  const { orders, refreshOrders } = useApp()
   const [copiedId, setCopiedId] = useState(null)
+
+  useEffect(() => {
+    if (refreshOrders) {
+      refreshOrders()
+    }
+  }, [])
 
   const pendingOrders = orders.filter((o) => o.status === 'pending')
 

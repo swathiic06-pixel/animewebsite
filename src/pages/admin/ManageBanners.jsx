@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { 
   Sliders, 
   Upload, 
@@ -13,7 +13,8 @@ import {
   ExternalLink,
   Info,
   X,
-  Loader2
+  Loader2,
+  RefreshCw
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { BANNER_SPECS, uploadBannerImage } from '../../utils/imageCompressor'
@@ -21,14 +22,31 @@ import { cldUrl } from '../../lib/cloudinary'
 import Modal from '../../components/common/Modal'
 
 export default function ManageBanners() {
-  const { banners, updateBanner, resetBanner } = useApp()
+  const { banners, updateBanner, resetBanner, refreshBanners } = useApp()
 
   const [activeSection, setActiveSection] = useState(null)
   const [formData, setFormData] = useState(null)
   const [isUploading, setIsUploading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [useUrlInput, setUseUrlInput] = useState(false)
   const [toastMessage, setToastMessage] = useState('')
+
+  // Re-fetch fresh banners on mount
+  useEffect(() => {
+    if (refreshBanners) {
+      refreshBanners()
+    }
+  }, [])
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true)
+    try {
+      if (refreshBanners) await refreshBanners()
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
 
   const sectionsList = [
     {
@@ -170,15 +188,27 @@ export default function ManageBanners() {
           </p>
         </div>
 
-        <a
-          href="/"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-white hover:bg-gray-50 border border-slate-200 text-[#111111] text-xs font-bold shadow-sm transition-all self-start sm:self-auto"
-        >
-          <ExternalLink className="w-4 h-4 text-slate-500" />
-          <span>View Live Storefront</span>
-        </a>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <button
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-full bg-white hover:bg-gray-50 border border-slate-200 text-[#111111] text-xs font-bold shadow-sm transition-all"
+            title="Sync latest banners from database"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-[#3B82F6]' : 'text-slate-500'}`} />
+            <span>{isRefreshing ? 'Syncing...' : 'Sync Banners'}</span>
+          </button>
+
+          <a
+            href="/"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-white hover:bg-gray-50 border border-slate-200 text-[#111111] text-xs font-bold shadow-sm transition-all"
+          >
+            <ExternalLink className="w-4 h-4 text-slate-500" />
+            <span>View Live Storefront</span>
+          </a>
+        </div>
       </div>
 
       {/* Sections Grid */}

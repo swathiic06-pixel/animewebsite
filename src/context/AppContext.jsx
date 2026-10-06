@@ -405,11 +405,12 @@ export function AppProvider({ children }) {
 
 
   // Dedicated function to fetch/refresh homepage banners from Supabase
-  const refreshBanners = async () => {
-    if (!isSupabaseConfigured || !supabase) return
+  const refreshBanners = useCallback(async () => {
+    if (!isSupabaseConfigured) return
 
     try {
-      const { data: remoteBanners, error: banErr } = await supabase
+      const client = supabaseAnon || supabase
+      const { data: remoteBanners, error: banErr } = await client
         .from('homepage_banners')
         .select('*')
 
@@ -429,6 +430,9 @@ export function AppProvider({ children }) {
               merged[sec] = remote
             }
           })
+          try {
+            localStorage.setItem(BANNERS_STORAGE_KEY, JSON.stringify(merged))
+          } catch {}
           return merged
         })
       } else if (banErr) {
@@ -437,10 +441,10 @@ export function AppProvider({ children }) {
     } catch (err) {
       console.warn('Failed to refresh banners from Supabase:', err)
     }
-  }
+  }, [])
 
   // Dedicated function to fetch/refresh orders from Supabase
-  const refreshOrders = async () => {
+  const refreshOrders = useCallback(async () => {
     if (!isSupabaseConfigured) return
 
     try {
@@ -475,10 +479,10 @@ export function AppProvider({ children }) {
     } catch (err) {
       console.warn('Failed to refresh orders from Supabase:', err)
     }
-  }
+  }, [])
 
   // Dedicated function to fetch/refresh product gallery images from Supabase
-  const refreshProductImages = async () => {
+  const refreshProductImages = useCallback(async () => {
     if (!isSupabaseConfigured) return
     try {
       const client = supabaseAnon || supabase
@@ -516,10 +520,10 @@ export function AppProvider({ children }) {
     } catch (err) {
       console.warn('Failed to refresh product images:', err)
     }
-  }
+  }, [])
 
   // Dedicated function to fetch/refresh buyer product requests from Supabase
-  const refreshRequests = async () => {
+  const refreshRequests = useCallback(async () => {
     if (!isSupabaseConfigured) return
     try {
       const client = supabaseAnon || supabase
@@ -539,91 +543,78 @@ export function AppProvider({ children }) {
     } catch (err) {
       console.warn('Failed to refresh requests:', err)
     }
-  }
+  }, [])
 
-  // Load from Supabase if configured
+  // Dedicated function to fetch/refresh buyer profiles from Supabase
+  const refreshBuyerProfiles = useCallback(async () => {
+    if (!isSupabaseConfigured) return
+    try {
+      const client = supabaseAnon || supabase
+      const { data: remoteProfiles, error: profErr } = await client
+        .from('buyer_profiles')
+        .select('*')
+
+      if (!profErr && Array.isArray(remoteProfiles)) {
+        const profMap = {}
+        remoteProfiles.forEach(p => {
+          if (p.user_id) profMap[p.user_id] = p
+        })
+        setBuyerProfiles(profMap)
+        try {
+          localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(profMap))
+        } catch {}
+      }
+    } catch (err) {
+      console.warn('Failed to refresh buyer profiles:', err)
+    }
+  }, [])
+
+  // Master function to sync the entire store and admin suite at once
+  const [isSyncingAll, setIsSyncingAll] = useState(false)
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false)
+
+  const refreshAllAdminData = useCallback(async () => {
+    setIsSyncingAll(true)
+    try {
+      await Promise.allSettled([
+        refreshProducts(),
+        refreshCategories(),
+        refreshOrders(),
+        refreshRequests(),
+        refreshBanners(),
+        refreshBuyerProfiles(),
+      ])
+    } finally {
+      setIsSyncingAll(false)
+    }
+  }, [refreshProducts, refreshCategories, refreshOrders, refreshRequests, refreshBanners, refreshBuyerProfiles])
+
+  // Load all store data from Supabase on mount
   useEffect(() => {
     if (!isSupabaseConfigured) return
 
     async function loadSupabaseData() {
       setIsLoading(true)
       try {
-        const client = supabaseAnon || supabase
-        const { data: remoteProducts, error: prodErr } = await client
-          .from('products')
-          .select('*')
-          .order('created_at', { ascending: false })
-
-        console.log('[loadSupabaseData products]', { count: remoteProducts?.length, prodErr: prodErr?.message })
-
-        // Also fetch product images gallery
-        const { data: remoteImages, error: imgErr } = await client
-          .from('product_images')
-          .select('*')
-          .order('sort_order', { ascending: true })
-
-        const imagesByProduct = new Map()
-        if (!imgErr && Array.isArray(remoteImages)) {
-          remoteImages.forEach(img => {
-            if (!imagesByProduct.has(img.product_id)) {
-              imagesByProduct.set(img.product_id, [])
-            }
-            imagesByProduct.get(img.product_id).push(img)
-          })
-        }
-
-        if (!prodErr && Array.isArray(remoteProducts)) {
-          const cleanRemote = remoteProducts
-            .filter(p => p && p.id && !p.id.startsWith('hw-') && !p.id.startsWith('prod-00') && p.name?.toLowerCase() !== 'supabase' && p.name?.toLowerCase() !== 'demo' && p.name?.toLowerCase() !== 'demo product')
-            .map(p => {
-              const imgs = imagesByProduct.get(p.id) || []
-              const cover = imgs.find(i => i.is_cover) || imgs[0]
-              const coverUrl = cover?.image_url || p.image_url || ''
-              return {
-                ...p,
-                image_url: coverUrl,
-                images: imgs.length > 0 ? imgs : (coverUrl ? [{ id: `legacy-${p.id}`, product_id: p.id, image_url: coverUrl, sort_order: 0, is_cover: true }] : [])
-              }
-            })
-
-          // SINGLE SHARED STORE CATALOG:
-          // Supabase is the single source of truth across all owner accounts.
-          setProducts(cleanRemote)
-          try {
-            localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(cleanRemote))
-          } catch (e) {}
-        } else if (prodErr) {
-          console.warn('Products fetch notice:', prodErr.message)
-        }
-
-        const { data: remoteProfiles, error: profErr } = await client
-          .from('buyer_profiles')
-          .select('*')
-
-        if (!profErr && Array.isArray(remoteProfiles)) {
-          const profMap = {}
-          remoteProfiles.forEach(p => {
-            if (p.user_id) profMap[p.user_id] = p
-          })
-          setBuyerProfiles(profMap)
-        }
-
-        await refreshOrders()
-        await refreshBanners()
-        await refreshCategories()
-        await refreshRequests()
-
+        await Promise.allSettled([
+          refreshProducts(),
+          refreshCategories(),
+          refreshOrders(),
+          refreshRequests(),
+          refreshBanners(),
+          refreshBuyerProfiles(),
+        ])
       } catch (err) {
-        console.warn('Supabase fetch failed, falling back to local store', err)
+        console.warn('Supabase initial fetch notice:', err)
       } finally {
         setIsLoading(false)
       }
     }
 
     loadSupabaseData()
-  }, [])
+  }, [refreshProducts, refreshCategories, refreshOrders, refreshRequests, refreshBanners, refreshBuyerProfiles])
 
-  // Cross-tab storage synchronization
+  // Cross-tab storage synchronization across all store entities
   useEffect(() => {
     const handleStorage = (e) => {
       if (e.key === PRODUCTS_STORAGE_KEY) {
@@ -640,6 +631,26 @@ export function AppProvider({ children }) {
             setOrders(updated.filter(o => o && o.id && o.id !== 'ord-9042' && o.id !== 'ord-8711' && !String(o.id).startsWith('ord-demo')))
           }
         } catch {}
+      } else if (e.key === CATEGORIES_STORAGE_KEY) {
+        try {
+          const updated = JSON.parse(e.newValue || '[]')
+          if (Array.isArray(updated)) setCategories(updated)
+        } catch {}
+      } else if (e.key === REQUESTS_STORAGE_KEY) {
+        try {
+          const updated = JSON.parse(e.newValue || '[]')
+          if (Array.isArray(updated)) setRequests(updated)
+        } catch {}
+      } else if (e.key === BANNERS_STORAGE_KEY) {
+        try {
+          const updated = JSON.parse(e.newValue || '{}')
+          if (typeof updated === 'object' && updated !== null) setBanners(prev => ({ ...prev, ...updated }))
+        } catch {}
+      } else if (e.key === PROFILES_STORAGE_KEY) {
+        try {
+          const updated = JSON.parse(e.newValue || '{}')
+          if (typeof updated === 'object' && updated !== null) setBuyerProfiles(updated)
+        } catch {}
       }
     }
 
@@ -647,62 +658,59 @@ export function AppProvider({ children }) {
     return () => window.removeEventListener('storage', handleStorage)
   }, [])
 
-  // Supabase Realtime subscriptions for multi-device / multi-browser live sync
+  // Supabase Realtime subscriptions: Live synchronization across all owners, devices, and browsers
   useEffect(() => {
     if (!isSupabaseConfigured) return
     const client = supabaseAnon || supabase
     if (!client || typeof client.channel !== 'function') return
 
-    const productChannel = client
-      .channel('animemax-live-products')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, async () => {
-        try {
-          const { data } = await client.from('products').select('*').order('created_at', { ascending: false })
-          if (Array.isArray(data)) {
-            const clean = data.filter(p => p && p.id && !p.id.startsWith('hw-') && !p.id.startsWith('prod-00'))
-            setProducts(prev => {
-              const currentImagesMap = new Map(prev.map(p => [p.id, p.images]))
-              return clean.map(p => ({
-                ...p,
-                images: currentImagesMap.get(p.id) || p.images || []
-              }))
-            })
-            await refreshProductImages()
-          }
-        } catch {}
+    const adminSyncChannel = client
+      .channel('animemax-admin-live-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, async (payload) => {
+        console.log('[Realtime] Products change:', payload.eventType)
+        await refreshProducts()
       })
-      .subscribe()
-
-    const imagesChannel = client
-      .channel('animemax-live-product-images')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'product_images' }, async () => {
-        await refreshProductImages()
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'product_images' }, async (payload) => {
+        console.log('[Realtime] Product images change:', payload.eventType)
+        await refreshProducts()
       })
-      .subscribe()
-
-    const orderChannel = client
-      .channel('animemax-live-orders')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, async () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, async (payload) => {
+        console.log('[Realtime] Categories change:', payload.eventType)
+        await refreshCategories()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, async (payload) => {
+        console.log('[Realtime] Orders change:', payload.eventType)
         await refreshOrders()
       })
-      .subscribe()
-
-    const requestsChannel = client
-      .channel('animemax-live-requests')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'product_requests' }, async () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'product_requests' }, async (payload) => {
+        console.log('[Realtime] Product requests change:', payload.eventType)
         await refreshRequests()
       })
-      .subscribe()
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'homepage_banners' }, async (payload) => {
+        console.log('[Realtime] Homepage banners change:', payload.eventType)
+        await refreshBanners()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'buyer_profiles' }, async (payload) => {
+        console.log('[Realtime] Buyer profiles change:', payload.eventType)
+        await refreshBuyerProfiles()
+      })
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          setIsRealtimeConnected(true)
+          console.log('[Supabase Realtime] Connected to live store channel')
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setIsRealtimeConnected(false)
+          console.warn('[Supabase Realtime] Channel status:', status, err)
+        }
+      })
 
     return () => {
       try {
-        client.removeChannel(productChannel)
-        client.removeChannel(imagesChannel)
-        client.removeChannel(orderChannel)
-        client.removeChannel(requestsChannel)
+        client.removeChannel(adminSyncChannel)
+        setIsRealtimeConnected(false)
       } catch {}
     }
-  }, [])
+  }, [refreshProducts, refreshCategories, refreshOrders, refreshRequests, refreshBanners, refreshBuyerProfiles])
 
   // Helper to demote conflicting products when assigning single-slot or max-slot sections
   const resolvePlacements = async (currentProducts, targetId, newSection) => {
@@ -797,7 +805,12 @@ export function AppProvider({ children }) {
 
     setCategories(prev => {
       const next = [...prev.filter(c => c.slug !== newCategory.slug), newCategory]
-      return next.sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
+      const sorted = next.sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
+      try {
+        localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(sorted))
+        window.dispatchEvent(new Event('storage'))
+      } catch (e) {}
+      return sorted
     })
     return newCategory
   }
@@ -824,7 +837,12 @@ export function AppProvider({ children }) {
 
     setCategories(prev => {
       const next = prev.map(c => (c.id === id ? { ...c, ...sanitized } : c))
-      return next.sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
+      const sorted = next.sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
+      try {
+        localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(sorted))
+        window.dispatchEvent(new Event('storage'))
+      } catch (e) {}
+      return sorted
     })
   }
 
@@ -860,7 +878,14 @@ export function AppProvider({ children }) {
       }
     }
 
-    setCategories(prev => prev.filter(c => c.id !== id))
+    setCategories(prev => {
+      const next = prev.filter(c => c.id !== id)
+      try {
+        localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(next))
+        window.dispatchEvent(new Event('storage'))
+      } catch (e) {}
+      return next
+    })
     return { success: true }
   }
 
@@ -1063,6 +1088,7 @@ export function AppProvider({ children }) {
     setProducts(updatedList)
     try {
       localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(updatedList))
+      window.dispatchEvent(new Event('storage'))
     } catch (e) {}
 
     if (isSupabaseConfigured) {
@@ -1118,6 +1144,7 @@ export function AppProvider({ children }) {
       const next = prev.filter(p => p.id !== id)
       try {
         localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(next))
+        window.dispatchEvent(new Event('storage'))
       } catch (e) {}
       return next
     })
@@ -1207,17 +1234,23 @@ export function AppProvider({ children }) {
       const updated = prev.map(r => r.id === id ? { ...r, status } : r)
       try {
         localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(updated))
+        window.dispatchEvent(new Event('storage'))
       } catch {}
       return updated
     })
 
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured) {
       try {
         const client = supabaseAnon || supabase
-        const { error } = await client
+        let { error } = await client
           .from('product_requests')
           .update({ status })
           .eq('id', id)
+
+        if (error && supabaseAnon && client !== supabaseAnon) {
+          const retry = await supabaseAnon.from('product_requests').update({ status }).eq('id', id)
+          error = retry.error
+        }
 
         if (error) {
           console.error('Failed to update request status in Supabase:', error)
@@ -1235,14 +1268,18 @@ export function AppProvider({ children }) {
       const updated = prev.filter(r => r.id !== id)
       try {
         localStorage.setItem(REQUESTS_STORAGE_KEY, JSON.stringify(updated))
+        window.dispatchEvent(new Event('storage'))
       } catch {}
       return updated
     })
 
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured) {
       try {
         const client = supabaseAnon || supabase
-        await client.from('product_requests').delete().eq('id', id)
+        let { error } = await client.from('product_requests').delete().eq('id', id)
+        if (error && supabaseAnon && client !== supabaseAnon) {
+          await supabaseAnon.from('product_requests').delete().eq('id', id)
+        }
       } catch (err) {
         console.error('Failed to delete request from Supabase:', err)
       }
@@ -1305,6 +1342,7 @@ export function AppProvider({ children }) {
       const next = prev.map(o => (String(o.id) === String(orderId) ? { ...o, status: newStatus } : o))
       try {
         localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(next))
+        window.dispatchEvent(new Event('storage'))
       } catch (e) {}
       return next
     })
@@ -1313,10 +1351,15 @@ export function AppProvider({ children }) {
     if (isSupabaseConfigured) {
       try {
         const client = supabaseAnon || supabase
-        const { error } = await client
+        let { error } = await client
           .from('orders')
           .update({ status: newStatus })
           .eq('id', orderId)
+
+        if (error && supabaseAnon && client !== supabaseAnon) {
+          const retry = await supabaseAnon.from('orders').update({ status: newStatus }).eq('id', orderId)
+          error = retry.error
+        }
 
         if (error) {
           console.warn(`[Supabase] Failed to update order #${orderId} status:`, error.message || error)
@@ -1335,6 +1378,7 @@ export function AppProvider({ children }) {
       const next = prev.filter(o => String(o.id) !== String(orderId))
       try {
         localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(next))
+        window.dispatchEvent(new Event('storage'))
       } catch (e) {}
       return next
     })
@@ -1343,7 +1387,11 @@ export function AppProvider({ children }) {
     if (isSupabaseConfigured) {
       try {
         const client = supabaseAnon || supabase
-        const { error } = await client.from('orders').delete().eq('id', orderId)
+        let { error } = await client.from('orders').delete().eq('id', orderId)
+        if (error && supabaseAnon && client !== supabaseAnon) {
+          const retry = await supabaseAnon.from('orders').delete().eq('id', orderId)
+          error = retry.error
+        }
         if (error) {
           console.warn('[Supabase] Failed to delete order from database:', error.message)
         } else {
@@ -1367,18 +1415,26 @@ export function AppProvider({ children }) {
       updated_at: new Date().toISOString()
     }
 
-    if (isSupabaseConfigured && supabase) {
+    setBuyerProfiles(prev => {
+      const next = { ...prev, [userId]: updated }
       try {
-        await supabase.from('buyer_profiles').upsert([updated])
+        localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(next))
+        window.dispatchEvent(new Event('storage'))
+      } catch (e) {}
+      return next
+    })
+
+    if (isSupabaseConfigured) {
+      try {
+        const client = supabaseAnon || supabase
+        let { error } = await client.from('buyer_profiles').upsert([updated])
+        if (error && supabaseAnon && client !== supabaseAnon) {
+          await supabaseAnon.from('buyer_profiles').upsert([updated])
+        }
       } catch (err) {
         console.error(err)
       }
     }
-
-    setBuyerProfiles(prev => ({
-      ...prev,
-      [userId]: updated
-    }))
   }
 
   // Homepage Banner Operations
@@ -1390,14 +1446,19 @@ export function AppProvider({ children }) {
       updated_at: new Date().toISOString()
     }
 
-    setBanners(prev => ({
-      ...prev,
-      [section]: updated
-    }))
-
-    if (isSupabaseConfigured && supabase) {
+    setBanners(prev => {
+      const next = { ...prev, [section]: updated }
       try {
-        const { error } = await supabase
+        localStorage.setItem(BANNERS_STORAGE_KEY, JSON.stringify(next))
+        window.dispatchEvent(new Event('storage'))
+      } catch (e) {}
+      return next
+    })
+
+    if (isSupabaseConfigured) {
+      try {
+        const client = supabaseAnon || supabase
+        let { error } = await client
           .from('homepage_banners')
           .upsert({
             section,
@@ -1409,6 +1470,21 @@ export function AppProvider({ children }) {
             image_url: updated.image_url || '',
             updated_at: updated.updated_at
           }, { onConflict: 'section' })
+
+        if (error && supabaseAnon && client !== supabaseAnon) {
+          await supabaseAnon
+            .from('homepage_banners')
+            .upsert({
+              section,
+              eyebrow_tag: updated.eyebrow_tag || '',
+              headline: updated.headline || '',
+              subtext: updated.subtext || '',
+              cta_text: updated.cta_text || '',
+              cta_link: updated.cta_link || '',
+              image_url: updated.image_url || '',
+              updated_at: updated.updated_at
+            }, { onConflict: 'section' })
+        }
 
         if (error) {
           console.warn('Supabase banner upsert notice:', error.message)
@@ -1458,6 +1534,10 @@ export function AppProvider({ children }) {
         refreshBanners,
         refreshProductImages,
         refreshProducts,
+        refreshBuyerProfiles,
+        refreshAllAdminData,
+        isRealtimeConnected,
+        isSyncingAll,
         requests,
         submitProductRequest,
         updateRequestStatus,

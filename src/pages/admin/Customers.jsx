@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { 
   Users, 
   Search, 
@@ -8,14 +8,32 @@ import {
   Phone, 
   ExternalLink,
   ShieldCheck, 
-  UserCheck
+  UserCheck,
+  RefreshCw
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { formatPrice } from '../../utils/formatPrice'
 
 export default function Customers() {
-  const { orders, buyerProfiles } = useApp()
+  const { orders, buyerProfiles, refreshOrders, refreshBuyerProfiles } = useApp()
   const [searchFilter, setSearchFilter] = useState('')
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  // Sync customer records & profiles on mount
+  useEffect(() => {
+    if (refreshOrders) refreshOrders()
+    if (refreshBuyerProfiles) refreshBuyerProfiles()
+  }, [])
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true)
+    try {
+      if (refreshOrders) await refreshOrders()
+      if (refreshBuyerProfiles) await refreshBuyerProfiles()
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
 
   // Aggregate customers from orders and buyerProfiles
   const customerMap = new Map()
@@ -87,6 +105,16 @@ export default function Customers() {
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-[#EDEDED] text-xs font-semibold text-[#111827] hover:bg-gray-50 shadow-2xs transition-all"
+            title="Sync latest customers from orders and profiles"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-[#3B82F6]' : 'text-[#6B7280]'}`} />
+            <span>{isRefreshing ? 'Syncing...' : 'Sync Customers'}</span>
+          </button>
+
           <span className="text-xs text-[#6B7280] bg-white px-3 py-1.5 rounded-xl border border-[#EDEDED] shadow-2xs font-semibold">
             {customerList.length} Total Buyers
           </span>

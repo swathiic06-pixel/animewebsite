@@ -12,13 +12,14 @@ import {
   ChevronDown,
   ShoppingBag,
   ArrowRight,
-  ExternalLink
+  ExternalLink,
+  RefreshCw
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import QuickSearchModal from './QuickSearchModal'
 
 export default function AdminTopBar({ onMobileMenuToggle }) {
-  const { mockUser, logout, orders } = useApp()
+  const { mockUser, logout, orders, refreshAllAdminData, isRealtimeConnected, isSyncingAll } = useApp()
   const navigate = useNavigate()
 
   const [isSearchOpen, setIsSearchOpen] = useState(false)
@@ -106,6 +107,26 @@ export default function AdminTopBar({ onMobileMenuToggle }) {
         {/* Right: Actions (Theme toggle, Notifications, Admin Profile) */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0 ml-4">
           
+          {/* Live Store Realtime Sync Indicator & Manual Sync Button */}
+          <button
+            onClick={() => refreshAllAdminData && refreshAllAdminData(true)}
+            disabled={isSyncingAll}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-semibold text-[#374151] bg-[#F5F6F8] hover:bg-gray-100 border border-[#EDEDED] transition-all hover:border-gray-300 shadow-2xs"
+            title={isRealtimeConnected ? "Realtime sync active across all owner accounts. Click to manually refresh all store data." : "Realtime connecting... Click to refresh."}
+            aria-label="Realtime store sync"
+          >
+            <span className="relative flex h-2 w-2">
+              {isRealtimeConnected && !isSyncingAll && (
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              )}
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${isSyncingAll ? 'bg-blue-500' : isRealtimeConnected ? 'bg-emerald-500' : 'bg-amber-400'}`}></span>
+            </span>
+            <span className="hidden md:inline text-[11px] font-bold text-[#111827]">
+              {isSyncingAll ? 'Syncing...' : 'Live Store'}
+            </span>
+            {isSyncingAll && <RefreshCw className="w-3 h-3 text-blue-500 animate-spin" />}
+          </button>
+
           {/* Optional Light/Dark Theme Toggle Icon */}
           <button
             onClick={toggleTheme}

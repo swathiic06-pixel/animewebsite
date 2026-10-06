@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { 
   ShoppingBag, 
@@ -35,11 +35,18 @@ import { cldUrl } from '../../lib/cloudinary'
 import FulfillmentDetailsModal from '../../components/admin/FulfillmentDetailsModal'
 
 export default function Dashboard() {
-  const { products, orders, buyerProfiles } = useApp()
+  const { products, orders, buyerProfiles, refreshAllAdminData, isSyncingAll } = useApp()
 
   const [dateRangeKey, setDateRangeKey] = useState('30d')
   const [activeMenu, setActiveMenu] = useState(null)
   const [isFulfillmentModalOpen, setIsFulfillmentModalOpen] = useState(false)
+
+  // Ensure fresh shared data across all tables on mount
+  useEffect(() => {
+    if (refreshAllAdminData) {
+      refreshAllAdminData()
+    }
+  }, [])
 
   // Live date range & metrics calculation derived directly from store orders & products
   const {
@@ -256,8 +263,18 @@ export default function Dashboard() {
           </p>
         </div>
 
-        {/* Right-aligned Date Range + Period Filter */}
+        {/* Right-aligned Date Range + Period Filter + Sync Button */}
         <div className="flex items-center gap-3 self-start sm:self-auto">
+          <button
+            onClick={() => refreshAllAdminData && refreshAllAdminData(true)}
+            disabled={isSyncingAll}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-[#EDEDED] text-xs font-semibold text-[#111827] hover:bg-gray-50 shadow-2xs transition-all"
+            title="Refresh all store data (orders, catalog, analytics)"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAll ? 'animate-spin text-[#3B82F6]' : 'text-[#6B7280]'}`} />
+            <span className="hidden sm:inline">{isSyncingAll ? 'Syncing...' : 'Sync Store'}</span>
+          </button>
+
           <span className="text-xs font-medium text-[#6B7280] bg-white px-3 py-1.5 rounded-lg border border-[#EDEDED] shadow-2xs hidden md:inline-block">
             {activePeriod.dateRangeDisplay}
           </span>
