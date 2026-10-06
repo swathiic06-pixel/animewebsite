@@ -14,7 +14,7 @@ export default function ClerkAuthSync() {
   const { user, isLoaded, isSignedIn } = useUser()
   const { getToken } = useAuth()
   const clerk = useClerk()
-  const { setMockUser, registerLogoutHandler, refreshOrders } = useApp()
+  const { setMockUser, registerLogoutHandler, refreshOrders, refreshProducts, refreshCategories } = useApp()
 
   useEffect(() => {
     if (clerk && registerLogoutHandler) {
@@ -26,14 +26,20 @@ export default function ClerkAuthSync() {
   useEffect(() => {
     if (isLoaded && isSignedIn && typeof getToken === 'function') {
       setClerkTokenGetter(getToken)
-      // Sync fresh orders with the newly established authenticated token
+      // Sync fresh orders, products, and categories with the newly established authenticated token
       if (refreshOrders) {
         refreshOrders()
+      }
+      if (refreshProducts) {
+        refreshProducts()
+      }
+      if (refreshCategories) {
+        refreshCategories()
       }
     } else if (isLoaded && !isSignedIn) {
       setClerkTokenGetter(null)
     }
-  }, [isLoaded, isSignedIn, getToken, refreshOrders])
+  }, [isLoaded, isSignedIn, getToken, refreshOrders, refreshProducts, refreshCategories])
 
   useEffect(() => {
     if (!isLoaded) return

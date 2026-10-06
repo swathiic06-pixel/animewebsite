@@ -5,6 +5,7 @@ import { isClerkConfigured, OWNER_CLERK_ID, isOwnerUser } from '../lib/clerkClie
 const AppContext = createContext(null)
 
 const PRODUCTS_STORAGE_KEY = 'animemax_products_v2'
+const CATEGORIES_STORAGE_KEY = 'animemax_categories_v1'
 const ORDERS_STORAGE_KEY = 'animemax_orders_v1'
 const PROFILES_STORAGE_KEY = 'animemax_profiles_v1'
 const MOCK_USER_STORAGE_KEY = 'animemax_mock_user_v1'
@@ -321,17 +322,21 @@ export function AppProvider({ children }) {
   const categoriesTableAvailableRef = useRef(true)
 
   // Dedicated function to fetch/refresh categories from Supabase
-  const refreshCategories = async () => {
-    if (!isSupabaseConfigured || !supabase || !categoriesTableAvailableRef.current) return
+  const refreshCategories = useCallback(async () => {
+    if (!isSupabaseConfigured || !categoriesTableAvailableRef.current) return
 
     try {
-      const { data: remoteCategories, error: catErr } = await supabase
+      const client = supabaseAnon || supabase
+      const { data: remoteCategories, error: catErr } = await client
         .from('categories')
         .select('*')
         .order('display_order', { ascending: true })
 
       if (!catErr && Array.isArray(remoteCategories) && remoteCategories.length > 0) {
         setCategories(remoteCategories)
+        try {
+          localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(remoteCategories))
+        } catch (e) {}
       } else if (catErr && (catErr.code === 'PGRST205' || catErr.message?.includes('schema cache'))) {
         categoriesTableAvailableRef.current = false
       } else if (catErr) {
@@ -340,7 +345,62 @@ export function AppProvider({ children }) {
     } catch (err) {
       console.warn('Failed to refresh categories from Supabase:', err)
     }
-  }
+  }, [])
+
+  // Dedicated function to fetch/refresh products from Supabase (single shared store catalog)
+  const refreshProducts = useCallback(async () => {
+    if (!isSupabaseConfigured) return
+
+    try {
+      const client = supabaseAnon || supabase
+      const { data: remoteProducts, error: prodErr } = await client
+        .from('products')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      console.log('[Supabase products refresh]', { count: remoteProducts?.length, prodErr: prodErr?.message })
+
+      // Also fetch product images gallery
+      const { data: remoteImages } = await client
+        .from('product_images')
+        .select('*')
+        .order('sort_order', { ascending: true })
+
+      const imagesByProduct = new Map()
+      if (Array.isArray(remoteImages)) {
+        remoteImages.forEach(img => {
+          if (!imagesByProduct.has(img.product_id)) {
+            imagesByProduct.set(img.product_id, [])
+          }
+          imagesByProduct.get(img.product_id).push(img)
+        })
+      }
+
+      if (!prodErr && Array.isArray(remoteProducts)) {
+        const cleanRemote = remoteProducts
+          .filter(p => p && p.id && !p.id.startsWith('hw-') && !p.id.startsWith('prod-00') && p.name?.toLowerCase() !== 'supabase' && p.name?.toLowerCase() !== 'demo' && p.name?.toLowerCase() !== 'demo product')
+          .map(p => {
+            const imgs = imagesByProduct.get(p.id) || []
+            const cover = imgs.find(i => i.is_cover) || imgs[0]
+            const coverUrl = cover?.image_url || p.image_url || ''
+            return {
+              ...p,
+              image_url: coverUrl,
+              images: imgs.length > 0 ? imgs : (coverUrl ? [{ id: `legacy-${p.id}`, product_id: p.id, image_url: coverUrl, sort_order: 0, is_cover: true }] : [])
+            }
+          })
+
+        setProducts(cleanRemote)
+        try {
+          localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(cleanRemote))
+        } catch (e) {}
+      } else if (prodErr) {
+        console.warn('Products refresh notice:', prodErr.message)
+      }
+    } catch (err) {
+      console.warn('Failed to refresh products from Supabase:', err)
+    }
+  }, [])
 
 
 
@@ -494,6 +554,8 @@ export function AppProvider({ children }) {
           .select('*')
           .order('created_at', { ascending: false })
 
+        console.log('[loadSupabaseData products]', { count: remoteProducts?.length, prodErr: prodErr?.message })
+
         // Also fetch product images gallery
         const { data: remoteImages, error: imgErr } = await client
           .from('product_images')
@@ -512,7 +574,7 @@ export function AppProvider({ children }) {
 
         if (!prodErr && Array.isArray(remoteProducts)) {
           const cleanRemote = remoteProducts
-            .filter(p => p && p.id && !p.id.startsWith('hw-') && !p.id.startsWith('prod-00'))
+            .filter(p => p && p.id && !p.id.startsWith('hw-') && !p.id.startsWith('prod-00') && p.name?.toLowerCase() !== 'supabase' && p.name?.toLowerCase() !== 'demo' && p.name?.toLowerCase() !== 'demo product')
             .map(p => {
               const imgs = imagesByProduct.get(p.id) || []
               const cover = imgs.find(i => i.is_cover) || imgs[0]
@@ -524,18 +586,12 @@ export function AppProvider({ children }) {
               }
             })
 
-          // Preserve any locally added products that are not yet on remote Supabase
-          setProducts(prevLocal => {
-            const remoteMap = new Map(cleanRemote.map(p => [p.id, p]))
-            const localOnly = (prevLocal || []).filter(
-              lp => lp && lp.id && !remoteMap.has(lp.id) && !lp.id.startsWith('hw-') && !lp.id.startsWith('prod-00')
-            )
-            const merged = [...cleanRemote, ...localOnly]
-            try {
-              localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(merged))
-            } catch (e) {}
-            return merged
-          })
+          // SINGLE SHARED STORE CATALOG:
+          // Supabase is the single source of truth across all owner accounts.
+          setProducts(cleanRemote)
+          try {
+            localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(cleanRemote))
+          } catch (e) {}
         } else if (prodErr) {
           console.warn('Products fetch notice:', prodErr.message)
         }
@@ -707,12 +763,19 @@ export function AppProvider({ children }) {
       created_at: new Date().toISOString(),
     }
 
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured) {
       try {
-        const { data, error } = await supabase
+        const client = supabase || supabaseAnon
+        let { data, error } = await client
           .from('categories')
           .insert([newCategory])
           .select()
+
+        if (error && supabaseAnon && client !== supabaseAnon) {
+          const retry = await supabaseAnon.from('categories').insert([newCategory]).select()
+          data = retry.data
+          error = retry.error
+        }
 
         if (!error && data?.[0]) {
           const created = data[0]
@@ -720,6 +783,9 @@ export function AppProvider({ children }) {
             const next = [...prev.filter(c => c.id !== created.id && c.slug !== created.slug), created]
             return next.sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
           })
+          try {
+            localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(categories))
+          } catch {}
           return created
         } else if (error && error.code !== 'PGRST205') {
           console.warn('Supabase category insert notice:', error.message)
@@ -744,9 +810,13 @@ export function AppProvider({ children }) {
       slug: updates.slug ? generateSlug(updates.slug) : undefined,
     }
 
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured) {
       try {
-        await supabase.from('categories').update(sanitized).eq('id', id)
+        const client = supabase || supabaseAnon
+        let { error } = await client.from('categories').update(sanitized).eq('id', id)
+        if (error && supabaseAnon && client !== supabaseAnon) {
+          await supabaseAnon.from('categories').update(sanitized).eq('id', id)
+        }
       } catch (err) {
         console.warn('Supabase category update error:', err)
       }
@@ -778,9 +848,13 @@ export function AppProvider({ children }) {
       }
     }
 
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured) {
       try {
-        await supabase.from('categories').delete().eq('id', id)
+        const client = supabase || supabaseAnon
+        let { error } = await client.from('categories').delete().eq('id', id)
+        if (error && supabaseAnon && client !== supabaseAnon) {
+          await supabaseAnon.from('categories').delete().eq('id', id)
+        }
       } catch (err) {
         console.warn('Supabase category delete error:', err)
       }
@@ -864,9 +938,10 @@ export function AppProvider({ children }) {
     } catch (e) {}
 
     // 2. Persist to Supabase
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured) {
       try {
-        const { data, error } = await supabase.from('products').insert([cleanProductData ? {
+        const client = supabase || supabaseAnon
+        const payload = cleanProductData ? {
           id: newProduct.id,
           name: newProduct.name,
           description: newProduct.description || '',
@@ -883,7 +958,15 @@ export function AppProvider({ children }) {
           sort_order: newProduct.sort_order,
           category_id: newProduct.category_id,
           created_at: newProduct.created_at
-        } : newProduct]).select()
+        } : newProduct
+
+        let { data, error } = await client.from('products').insert([payload]).select()
+
+        if (error && supabaseAnon && client !== supabaseAnon) {
+          const retry = await supabaseAnon.from('products').insert([payload]).select()
+          data = retry.data
+          error = retry.error
+        }
 
         if (!error && data && data[0]) {
           const finalItem = { ...newProduct, ...data[0], images: imageRows }
@@ -909,13 +992,15 @@ export function AppProvider({ children }) {
             in_stock: newProduct.in_stock,
             created_at: newProduct.created_at
           }
-          await supabase.from('products').insert([coreFallback])
+          const retryClient = supabaseAnon || client
+          await retryClient.from('products').insert([coreFallback])
         }
 
         // Insert gallery images into product_images table
         if (imageRows.length > 0) {
           try {
-            await supabase.from('product_images').insert(imageRows)
+            const imgClient = supabaseAnon || supabase
+            await imgClient.from('product_images').insert(imageRows)
           } catch (imgErr) {
             console.warn('Supabase product_images insert warning:', imgErr)
           }
@@ -980,22 +1065,29 @@ export function AppProvider({ children }) {
       localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(updatedList))
     } catch (e) {}
 
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured) {
       try {
-        const { error } = await supabase.from('products').update(sanitized).eq('id', id)
+        const client = supabase || supabaseAnon
+        let { error } = await client.from('products').update(sanitized).eq('id', id)
+        if (error && supabaseAnon && client !== supabaseAnon) {
+          const retry = await supabaseAnon.from('products').update(sanitized).eq('id', id)
+          error = retry.error
+        }
         if (error) {
           // Fallback if schema does not have display_section or sort_order yet
           const { display_section, sort_order, category_id, ...fallbackUpdates } = sanitized
           if (Object.keys(fallbackUpdates).length > 0) {
-            await supabase.from('products').update(fallbackUpdates).eq('id', id)
+            const fallbackClient = supabaseAnon || client
+            await fallbackClient.from('products').update(fallbackUpdates).eq('id', id)
           }
         }
 
         if (imageRows) {
           try {
-            await supabase.from('product_images').delete().eq('product_id', id)
+            const imgClient = supabaseAnon || client
+            await imgClient.from('product_images').delete().eq('product_id', id)
             if (imageRows.length > 0) {
-              await supabase.from('product_images').insert(imageRows)
+              await imgClient.from('product_images').insert(imageRows)
             }
           } catch (imgErr) {
             console.warn('Failed to update product_images in Supabase:', imgErr)
@@ -1033,8 +1125,12 @@ export function AppProvider({ children }) {
     // 2. Persist deletion to Supabase
     if (isSupabaseConfigured) {
       try {
-        const client = supabaseAnon || supabase
-        const { error } = await client.from('products').delete().eq('id', id)
+        const client = supabase || supabaseAnon
+        let { error } = await client.from('products').delete().eq('id', id)
+        if (error && supabaseAnon && client !== supabaseAnon) {
+          const retry = await supabaseAnon.from('products').delete().eq('id', id)
+          error = retry.error
+        }
         if (error) {
           console.warn('[Supabase] Failed to delete product from database:', error.message)
         } else {
@@ -1361,6 +1457,7 @@ export function AppProvider({ children }) {
         resetBanner,
         refreshBanners,
         refreshProductImages,
+        refreshProducts,
         requests,
         submitProductRequest,
         updateRequestStatus,

@@ -311,9 +311,11 @@ export default function ProductForm({ initialProduct = null, onSubmit, onCancel,
     if (uploadingFiles.length > 0) return
     const errs = validate()
     if (Object.keys(errs).length > 0) {
+      console.log('[ProductForm] validation errors:', JSON.stringify(errs))
       setErrors(errs)
       return
     }
+    console.log('[ProductForm] submitted successfully:', formData.name)
 
     const hwParsed = formData.hw_num !== '' && !isNaN(formData.hw_num) ? parseInt(formData.hw_num) : undefined
     const sortOrderParsed = formData.sort_order !== '' && !isNaN(formData.sort_order)

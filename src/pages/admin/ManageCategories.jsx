@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { 
   Plus, 
@@ -11,6 +11,7 @@ import {
   ExternalLink,
   ArrowUpDown,
   Tag,
+  RefreshCw,
   Car,
   Truck,
   Zap,
@@ -24,7 +25,24 @@ import { useApp, generateSlug } from '../../context/AppContext'
 import Modal from '../../components/common/Modal'
 
 export default function ManageCategories() {
-  const { categories = [], products = [], addCategory, updateCategory, deleteCategory } = useApp()
+  const { categories = [], products = [], addCategory, updateCategory, deleteCategory, refreshCategories, refreshProducts } = useApp()
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  // Ensure latest shared categories and products are loaded on mount
+  useEffect(() => {
+    if (refreshCategories) refreshCategories()
+    if (refreshProducts) refreshProducts()
+  }, [])
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true)
+    try {
+      if (refreshCategories) await refreshCategories()
+      if (refreshProducts) await refreshProducts()
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
 
   const getCategoryLucideIcon = (cat) => {
     const s = (cat.slug || cat.name || '').toLowerCase()
@@ -220,6 +238,16 @@ export default function ManageCategories() {
         </div>
 
         <div className="flex items-center gap-2.5 self-start sm:self-auto">
+          <button
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-[#EDEDED] bg-white hover:bg-gray-50 text-xs font-semibold text-[#4B5563] shadow-2xs transition-all disabled:opacity-50"
+            title="Refresh shared store categories"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-[#3B82F6] ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>{isRefreshing ? 'Refreshing...' : 'Sync Categories'}</span>
+          </button>
+
           <Link
             to="/admin/products"
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-[#EDEDED] bg-white hover:bg-gray-50 text-xs font-semibold text-[#4B5563] shadow-2xs transition-all"
