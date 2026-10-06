@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Routes, Route, useLocation } from 'react-router-dom'
+import { Routes, Route, useLocation, Navigate } from 'react-router-dom'
 import CartDrawer from './components/storefront/CartDrawer'
 import StorefrontSidebar from './components/storefront/StorefrontSidebar'
 import StorefrontTopBar from './components/storefront/StorefrontTopBar'
@@ -26,7 +26,6 @@ import ManageProducts from './pages/admin/ManageProducts'
 import ManageCategories from './pages/admin/ManageCategories'
 import ManageOrders from './pages/admin/ManageOrders'
 import ManageRequests from './pages/admin/ManageRequests'
-import ManageBanners from './pages/admin/ManageBanners'
 import Customers from './pages/admin/Customers'
 import Messages from './pages/admin/Messages'
 import AdminSettings from './pages/admin/AdminSettings'
@@ -55,7 +54,7 @@ export default function App() {
             <Route path="/admin/categories" element={<ProtectedAdminRoute><ManageCategories /></ProtectedAdminRoute>} />
             <Route path="/admin/orders" element={<ProtectedAdminRoute><ManageOrders /></ProtectedAdminRoute>} />
             <Route path="/admin/requests" element={<ProtectedAdminRoute><ManageRequests /></ProtectedAdminRoute>} />
-            <Route path="/admin/content" element={<ProtectedAdminRoute><ManageBanners /></ProtectedAdminRoute>} />
+            <Route path="/admin/content" element={<Navigate to="/admin" replace />} />
             <Route path="/admin/customers" element={<ProtectedAdminRoute><Customers /></ProtectedAdminRoute>} />
             <Route path="/admin/settings" element={<ProtectedAdminRoute><AdminSettings /></ProtectedAdminRoute>} />
             <Route path="/admin/messages" element={<ProtectedAdminRoute><Messages /></ProtectedAdminRoute>} />

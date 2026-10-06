@@ -7,8 +7,7 @@ import {
   Sparkle,
   ShoppingBag,
   Check,
-  X,
-  ArrowRight
+  X
 } from '@phosphor-icons/react'
 import { useApp } from '../../context/AppContext'
 import { useCart } from '../../context/CartContext'
@@ -18,8 +17,7 @@ import { cldUrl } from '../../lib/cloudinary'
 import { getProductCoverImage } from '../../utils/productImages'
 
 export default function Home() {
-  const { products, categories = [], banners = {} } = useApp()
-  const heroBanner = banners?.hero
+  const { products, categories = [] } = useApp()
   const { addToCart, items } = useCart()
 
   const [searchParams, setSearchParams] = useSearchParams()
@@ -155,49 +153,6 @@ export default function Home() {
 
   return (
     <div className="space-y-6" style={{ fontFamily: 'Inter, sans-serif' }}>
-
-      {/* ── Hero Banner Section (Kinetic Editorial Style) ─────────────── */}
-      {heroBanner && isAll && !searchQuery && (
-        <div className="relative rounded-[16px] overflow-hidden border border-[#E5E5E5] bg-[#F8F8F6] p-6 sm:p-8 flex flex-col justify-between min-h-[220px] sm:min-h-[260px]">
-          <div className="relative z-10 max-w-lg space-y-3">
-            {heroBanner.eyebrow_tag && (
-              <span className="inline-flex items-center px-3 py-1 rounded-[12px] text-xs font-bold bg-[#111111] text-white uppercase tracking-wider font-['Inter']">
-                {heroBanner.eyebrow_tag}
-              </span>
-            )}
-            <h2 className="text-2xl sm:text-4xl font-extrabold text-[#111111] tracking-tight leading-tight font-['Syne']">
-              {heroBanner.headline || 'GET UP TO 50% OFF'}
-            </h2>
-            {heroBanner.subtext && (
-              <p className="text-sm text-[#6B6B6B] leading-relaxed max-w-md font-['Inter']">
-                {heroBanner.subtext}
-              </p>
-            )}
-            {heroBanner.cta_text && (
-              <div className="pt-2">
-                <a
-                  href={heroBanner.cta_link || '#catalog-view'}
-                  className="sf-btn-primary inline-flex items-center gap-2"
-                >
-                  <span>{heroBanner.cta_text}</span>
-                  <ArrowRight size={16} />
-                </a>
-              </div>
-            )}
-          </div>
-          {heroBanner.image_url && (
-            <div className="absolute right-0 bottom-0 top-0 w-1/2 sm:w-5/12 pointer-events-none overflow-hidden flex items-end justify-end opacity-40 sm:opacity-90">
-              <img
-                src={heroBanner.image_url}
-                alt={heroBanner.headline || 'Hero promotional banner'}
-                className="w-full h-full object-cover object-center"
-              />
-              <div className="absolute inset-0 bg-gradient-to-r from-[#F8F8F6] via-[#F8F8F6]/40 to-transparent" />
-            </div>
-          )}
-        </div>
-      )}
-
       {/* ── Page Header: Title + Filter Pills + Search/Filters ─────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 min-w-0 w-full">
 

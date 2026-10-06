@@ -6,7 +6,6 @@ import {
   Tags,
   ShoppingBag, 
   Users, 
-  Sparkles,
   ExternalLink, 
   Settings,
   HelpCircle,
@@ -61,12 +60,6 @@ export default function AdminSidebar({
       name: 'Customers',
       path: '/admin/customers',
       icon: Users,
-    },
-
-    {
-      name: 'Homepage Content',
-      path: '/admin/content',
-      icon: Sparkles,
     },
     {
       name: 'Online Store',
