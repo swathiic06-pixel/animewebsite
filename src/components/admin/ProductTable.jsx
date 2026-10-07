@@ -24,7 +24,7 @@ export default function ProductTable({ products, onEdit, onDelete, onToggleSoldO
               <th scope="col" className="px-5 py-3.5 font-semibold">Price</th>
               <th scope="col" className="px-5 py-3.5 font-semibold">Stock</th>
               <th scope="col" className="px-5 py-3.5 font-semibold">Status</th>
-              <th scope="col" className="px-5 py-3.5 font-semibold text-center">Stock Toggle</th>
+              <th scope="col" className="px-5 py-3.5 font-semibold text-center">Manual Override</th>
               <th scope="col" className="px-5 py-3.5 font-semibold text-right">Actions</th>
             </tr>
           </thead>
@@ -116,31 +116,50 @@ export default function ProductTable({ products, onEdit, onDelete, onToggleSoldO
                     {formatPrice(product.price)}
                   </td>
 
-                  {/* Stock */}
+                  {/* Stock with Low Stock Alert (Part 3) */}
                   <td className="px-5 py-3.5">
-                    <span className={`font-mono font-semibold ${product.stock <= 3 ? 'text-amber-600' : 'text-[#111827]'}`}>
-                      {product.stock} units
-                    </span>
+                    <div className="space-y-0.5">
+                      <span className={`font-mono font-semibold ${product.stock === 0 ? 'text-rose-600' : (product.stock <= (product.low_stock_threshold || 2)) ? 'text-amber-600' : 'text-[#111827]'}`}>
+                        {product.stock} units
+                      </span>
+                      {product.stock > 0 && product.stock <= (product.low_stock_threshold || 2) && (
+                        <span className="block text-[10px] text-amber-700 font-bold whitespace-nowrap">
+                          ⚠️ Low (≤{product.low_stock_threshold || 2})
+                        </span>
+                      )}
+                    </div>
                   </td>
 
                   {/* Storefront status badge */}
-                  <td className="px-5 py-3.5">
-                    <StockBadge inStock={product.in_stock} stock={product.stock} />
+                  <td className="px-5 py-3.5 whitespace-nowrap">
+                    {product.manually_sold_out ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                        Force Sold Out
+                      </span>
+                    ) : product.stock <= 0 ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                        Auto Sold Out
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        In Stock
+                      </span>
+                    )}
                   </td>
 
-                  {/* Quick One-Click Sold Out Toggle Button */}
-                  <td className="px-5 py-3.5 text-center">
+                  {/* Manual Override Button (Part 3) */}
+                  <td className="px-5 py-3.5 text-center whitespace-nowrap">
                     <button
                       onClick={() => onToggleSoldOut(product.id)}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                        product.in_stock
-                          ? 'bg-gray-100 hover:bg-rose-50 text-[#4B5563] hover:text-rose-700 border border-gray-200 hover:border-rose-200'
-                          : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 shadow-2xs'
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                        product.manually_sold_out
+                          ? 'bg-purple-100 hover:bg-purple-200 text-purple-800 border border-purple-300'
+                          : 'bg-gray-100 hover:bg-purple-50 text-[#4B5563] hover:text-purple-700 border border-gray-200 hover:border-purple-200'
                       }`}
-                      title="Click to toggle between In Stock and Sold Out without deleting"
+                      title={product.manually_sold_out ? 'Clear manual override to restore normal automatic stock computation' : 'Manually force this product as sold out (override)'}
                     >
                       <Power className="w-3.5 h-3.5" />
-                      <span>{product.in_stock ? 'Mark Sold Out' : 'Restore Stock'}</span>
+                      <span>{product.manually_sold_out ? 'Clear Override' : 'Force Sold Out'}</span>
                     </button>
                   </td>
 

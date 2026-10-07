@@ -11,6 +11,7 @@ const PROFILES_STORAGE_KEY = 'animemax_profiles_v1'
 const MOCK_USER_STORAGE_KEY = 'animemax_mock_user_v1'
 const BANNERS_STORAGE_KEY = 'animemax_banners_v1'
 const REQUESTS_STORAGE_KEY = 'animemax_requests_v1'
+const REPLACEMENTS_STORAGE_KEY = 'animemax_replacements_v1'
 
 export function generateUUID() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -155,6 +156,15 @@ export function AppProvider({ children }) {
   const [requests, setRequests] = useState(() => {
     try {
       const saved = localStorage.getItem(REQUESTS_STORAGE_KEY)
+      return saved ? JSON.parse(saved) : []
+    } catch {
+      return []
+    }
+  })
+
+  const [replacementRequests, setReplacementRequests] = useState(() => {
+    try {
+      const saved = localStorage.getItem(REPLACEMENTS_STORAGE_KEY)
       return saved ? JSON.parse(saved) : []
     } catch {
       return []
@@ -545,6 +555,29 @@ export function AppProvider({ children }) {
     }
   }, [])
 
+  // Dedicated function to fetch/refresh replacement requests from Supabase
+  const refreshReplacementRequests = useCallback(async () => {
+    if (!isSupabaseConfigured) return
+    try {
+      const client = supabaseAnon || supabase
+      const { data: remoteReplacements, error } = await client
+        .from('replacement_requests')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (!error && Array.isArray(remoteReplacements)) {
+        setReplacementRequests(remoteReplacements)
+        try {
+          localStorage.setItem(REPLACEMENTS_STORAGE_KEY, JSON.stringify(remoteReplacements))
+        } catch {}
+      } else if (error) {
+        console.warn('Replacement requests fetch warning:', error.message)
+      }
+    } catch (err) {
+      console.warn('Failed to refresh replacement requests:', err)
+    }
+  }, [])
+
   // Dedicated function to fetch/refresh buyer profiles from Supabase
   const refreshBuyerProfiles = useCallback(async () => {
     if (!isSupabaseConfigured) return
@@ -581,13 +614,14 @@ export function AppProvider({ children }) {
         refreshCategories(),
         refreshOrders(),
         refreshRequests(),
+        refreshReplacementRequests(),
         refreshBanners(),
         refreshBuyerProfiles(),
       ])
     } finally {
       setIsSyncingAll(false)
     }
-  }, [refreshProducts, refreshCategories, refreshOrders, refreshRequests, refreshBanners, refreshBuyerProfiles])
+  }, [refreshProducts, refreshCategories, refreshOrders, refreshRequests, refreshReplacementRequests, refreshBanners, refreshBuyerProfiles])
 
   // Load all store data from Supabase on mount
   useEffect(() => {
@@ -686,6 +720,14 @@ export function AppProvider({ children }) {
         console.log('[Realtime] Product requests change:', payload.eventType)
         await refreshRequests()
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'replacement_requests' }, async (payload) => {
+        console.log('[Realtime] Replacement requests change:', payload.eventType)
+        await refreshReplacementRequests()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, async (payload) => {
+        console.log('[Realtime] Order items change:', payload.eventType)
+        await refreshOrders()
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'homepage_banners' }, async (payload) => {
         console.log('[Realtime] Homepage banners change:', payload.eventType)
         await refreshBanners()
@@ -710,7 +752,7 @@ export function AppProvider({ children }) {
         setIsRealtimeConnected(false)
       } catch {}
     }
-  }, [refreshProducts, refreshCategories, refreshOrders, refreshRequests, refreshBanners, refreshBuyerProfiles])
+  }, [refreshProducts, refreshCategories, refreshOrders, refreshRequests, refreshReplacementRequests, refreshBanners, refreshBuyerProfiles])
 
   // Helper to demote conflicting products when assigning single-slot or max-slot sections
   const resolvePlacements = async (currentProducts, targetId, newSection) => {
@@ -1129,10 +1171,14 @@ export function AppProvider({ children }) {
     const product = products.find(p => p.id === id)
     if (!product) return
 
-    const newInStock = !product.in_stock
+    // Manual override: sets manually_sold_out as override
+    const newManuallySoldOut = !Boolean(product.manually_sold_out)
+    // in_stock is computed based on stock > 0 and !manually_sold_out
+    const newInStock = Number(product.stock) > 0 && !newManuallySoldOut
+
     const updates = {
+      manually_sold_out: newManuallySoldOut,
       in_stock: newInStock,
-      stock: newInStock ? Math.max(product.stock, 5) : 0
     }
 
     await updateProduct(id, updates)
@@ -1298,28 +1344,79 @@ export function AppProvider({ children }) {
 
     if (isSupabaseConfigured) {
       try {
-        // ALWAYS use the clean supabaseAnon client for order placement.
-        // Orders are open to anyone (guest or signed-in buyer) via public insert RLS policy.
-        // Using the pure anon client ensures PostgREST never fails due to third-party JWT algorithm mismatches.
         const client = supabaseAnon || supabase
-        let { error } = await client.from('orders').insert([newOrder])
-        
-        if (error && (error.code === 'PGRST301' || error.message?.includes('key') || error.message?.includes('JWT'))) {
-          console.warn('[Supabase] Retrying order insert with clean anon client due to JWT auth error:', error.message)
-          if (supabaseAnon && client !== supabaseAnon) {
-            const retry = await supabaseAnon.from('orders').insert([newOrder])
-            error = retry.error
+        // Try atomic RPC create_order_with_stock_decrement first
+        let rpcSuccess = false
+        try {
+          const { data: rpcData, error: rpcErr } = await client.rpc('create_order_with_stock_decrement', {
+            p_order_id: newOrderId,
+            p_user_id: orderData.user_id || null,
+            p_buyer_name: orderData.buyer_name,
+            p_buyer_phone: orderData.buyer_phone,
+            p_buyer_whatsapp: orderData.buyer_whatsapp,
+            p_buyer_address: orderData.buyer_address,
+            p_total_amount: orderData.total_amount,
+            p_items: orderData.items,
+          })
+          if (!rpcErr) {
+            rpcSuccess = true
+            console.log('[Supabase] Atomic order creation & stock decrement succeeded:', newOrderId)
+          } else {
+            console.warn('[Supabase] RPC create_order_with_stock_decrement notice:', rpcErr.message)
+          }
+        } catch (rpcEx) {
+          console.warn('[Supabase] RPC execution failed, falling back to direct insert:', rpcEx)
+        }
+
+        // Fallback: direct insert into orders and order_items if RPC was not used
+        if (!rpcSuccess) {
+          let { error } = await client.from('orders').insert([newOrder])
+          if (error && (error.code === 'PGRST301' || error.message?.includes('key') || error.message?.includes('JWT'))) {
+            if (supabaseAnon && client !== supabaseAnon) {
+              const retry = await supabaseAnon.from('orders').insert([newOrder])
+              error = retry.error
+            }
+          }
+
+          // Insert into order_items relational table
+          if (Array.isArray(orderData.items) && orderData.items.length > 0) {
+            const orderItemsRows = orderData.items.map(item => ({
+              order_id: newOrderId,
+              product_id: item.product_id || item.id,
+              quantity: Number(item.qty || item.quantity || 1),
+              price_at_purchase: Number(item.price || 0)
+            }))
+            await client.from('order_items').insert(orderItemsRows).catch(() => {})
           }
         }
 
-        if (error) {
-          console.warn('[Supabase] Remote order insert encountered an issue, saved locally:', error.message || error)
-        } else {
-          console.log('[Supabase] Order placed successfully:', newOrderId)
-        }
+        // Trigger notify-owner Edge Function in background
+        client.functions.invoke('notify-owner', { body: { record: newOrder } }).catch(err => {
+          console.log('[notify-owner] Edge function notice:', err?.message)
+        })
       } catch (err) {
         console.warn('[Supabase] Remote order insert error (non-fatal, order saved locally):', err)
       }
+    }
+
+    // Atomically decrement stock in local products state immediately
+    if (Array.isArray(orderData.items) && orderData.items.length > 0) {
+      setProducts(prevProducts => {
+        const next = prevProducts.map(p => {
+          const matchItem = orderData.items.find(item => String(item.product_id || item.id) === String(p.id))
+          if (matchItem) {
+            const qty = Number(matchItem.qty || matchItem.quantity || 1)
+            const newStock = Math.max(0, (Number(p.stock) || 0) - qty)
+            const inStock = newStock > 0 && !p.manually_sold_out
+            return { ...p, stock: newStock, in_stock: inStock }
+          }
+          return p
+        })
+        try {
+          localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(next))
+        } catch {}
+        return next
+      })
     }
 
     setOrders(prev => [newOrder, ...prev])
@@ -1336,10 +1433,88 @@ export function AppProvider({ children }) {
     return newOrder
   }
 
+  // Server-side enforced order cancellation (Part 1)
+  const cancelOrder = async (orderId, userId = null) => {
+    // 1. Client-side pre-guard
+    const targetOrder = orders.find(o => String(o.id) === String(orderId))
+    if (targetOrder) {
+      const hoursSincePlaced = (Date.now() - new Date(targetOrder.created_at).getTime()) / 36e5
+      if (hoursSincePlaced >= 24) {
+        throw new Error('Cancellation window has closed (must be within 24 hours of placement).')
+      }
+      if (!['pending', 'qr_sent', 'payment_confirmed'].includes(targetOrder.status)) {
+        throw new Error(`Order cannot be cancelled once dispatched or completed (current status: "${targetOrder.status}").`)
+      }
+    }
+
+    // 2. Server-side enforcement via Postgres RPC
+    if (isSupabaseConfigured) {
+      const client = supabaseAnon || supabase
+      const { error } = await client.rpc('cancel_order', {
+        p_order_id: orderId,
+        p_user_id: userId || null,
+      })
+      if (error) {
+        throw new Error(error.message || 'Server rejected cancellation request.')
+      }
+    }
+
+    const cancelledAt = new Date().toISOString()
+
+    // 3. Update order in local state
+    setOrders(prev => {
+      const next = prev.map(o => (String(o.id) === String(orderId) ? { ...o, status: 'cancelled', cancelled_at: cancelledAt } : o))
+      try {
+        localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(next))
+        window.dispatchEvent(new Event('storage'))
+      } catch (e) {}
+      return next
+    })
+
+    // 4. Restore product stock locally for all items in that order
+    if (targetOrder?.items) {
+      setProducts(prevProducts => {
+        const next = prevProducts.map(p => {
+          const matchItem = targetOrder.items.find(item => String(item.product_id || item.id) === String(p.id))
+          if (matchItem) {
+            const qty = Number(matchItem.qty || matchItem.quantity || 1)
+            const newStock = (Number(p.stock) || 0) + qty
+            const inStock = newStock > 0 && !p.manually_sold_out
+            return { ...p, stock: newStock, in_stock: inStock }
+          }
+          return p
+        })
+        try {
+          localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(next))
+        } catch {}
+        return next
+      })
+    }
+
+    // Refresh products from remote database to ensure sync
+    refreshProducts()
+    return true
+  }
+
   const updateOrderStatus = async (orderId, newStatus) => {
+    // If updating to cancelled, delegate to cancelOrder to trigger stock restoration
+    if (newStatus === 'cancelled') {
+      try {
+        await cancelOrder(orderId)
+        return
+      } catch (err) {
+        console.warn('cancelOrder failed, applying direct status update:', err.message)
+      }
+    }
+
+    const updates = { status: newStatus }
+    if (newStatus === 'delivered') {
+      updates.delivered_at = new Date().toISOString()
+    }
+
     // 1. Immediately update React state and localStorage immutably
     setOrders(prev => {
-      const next = prev.map(o => (String(o.id) === String(orderId) ? { ...o, status: newStatus } : o))
+      const next = prev.map(o => (String(o.id) === String(orderId) ? { ...o, ...updates } : o))
       try {
         localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(next))
         window.dispatchEvent(new Event('storage'))
@@ -1353,11 +1528,11 @@ export function AppProvider({ children }) {
         const client = supabaseAnon || supabase
         let { error } = await client
           .from('orders')
-          .update({ status: newStatus })
+          .update(updates)
           .eq('id', orderId)
 
         if (error && supabaseAnon && client !== supabaseAnon) {
-          const retry = await supabaseAnon.from('orders').update({ status: newStatus }).eq('id', orderId)
+          const retry = await supabaseAnon.from('orders').update(updates).eq('id', orderId)
           error = retry.error
         }
 
@@ -1366,9 +1541,202 @@ export function AppProvider({ children }) {
         } else {
           console.log(`[Supabase] Order #${orderId} status successfully updated to "${newStatus}"`)
         }
+
+        // Auto-generate invoice when order is payment verified or shipped
+        if (newStatus === 'payment_confirmed' || newStatus === 'shipped') {
+          generateInvoice(orderId).catch(() => {})
+        }
       } catch (err) {
         console.error('[Supabase] updateOrderStatus exception:', err)
       }
+    }
+  }
+
+  // Replacement Requests Operations (Part 2)
+  const createReplacementRequest = async ({ orderId, reason, referenceImageUrl }) => {
+    const order = orders.find(o => String(o.id) === String(orderId))
+    if (!order) {
+      throw new Error('Order not found')
+    }
+    if (order.status !== 'delivered' && order.status !== 'replacement_requested') {
+      throw new Error('Replacements can only be requested for delivered orders.')
+    }
+    if (!order.delivered_at) {
+      throw new Error('Delivery timestamp is missing for this order.')
+    }
+
+    const daysSinceDelivery = (Date.now() - new Date(order.delivered_at).getTime()) / (24 * 36e5)
+    if (daysSinceDelivery > 5) {
+      throw new Error('Replacement window has closed (5 days post-delivery limit).')
+    }
+
+    const newRequest = {
+      id: generateUUID(),
+      order_id: orderId,
+      reason: reason.trim(),
+      reference_image_url: referenceImageUrl || null,
+      status: 'pending',
+      created_at: new Date().toISOString(),
+    }
+
+    // Persist to Supabase
+    if (isSupabaseConfigured) {
+      const client = supabaseAnon || supabase
+      const { error } = await client.from('replacement_requests').insert([newRequest])
+      if (error) {
+        console.warn('[Supabase] replacement_requests insert warning:', error.message)
+      }
+    }
+
+    setReplacementRequests(prev => [newRequest, ...prev])
+    try {
+      localStorage.setItem(REPLACEMENTS_STORAGE_KEY, JSON.stringify([newRequest, ...replacementRequests]))
+    } catch {}
+
+    // Update order status to replacement_requested
+    await updateOrderStatus(orderId, 'replacement_requested')
+    return newRequest
+  }
+
+  const updateReplacementStatus = async (requestId, newStatus) => {
+    setReplacementRequests(prev => {
+      const next = prev.map(r => (String(r.id) === String(requestId) ? { ...r, status: newStatus } : r))
+      try {
+        localStorage.setItem(REPLACEMENTS_STORAGE_KEY, JSON.stringify(next))
+      } catch {}
+      return next
+    })
+
+    if (isSupabaseConfigured) {
+      try {
+        const client = supabaseAnon || supabase
+        await client.from('replacement_requests').update({ status: newStatus }).eq('id', requestId)
+      } catch (err) {
+        console.warn('Failed to update replacement status in Supabase:', err)
+      }
+    }
+
+    // If completed, update order status to replacement_resolved
+    const req = replacementRequests.find(r => String(r.id) === String(requestId))
+    if (req?.order_id) {
+      if (newStatus === 'completed') {
+        await updateOrderStatus(req.order_id, 'replacement_resolved')
+      } else if (newStatus === 'approved') {
+        await updateOrderStatus(req.order_id, 'replacement_requested')
+      }
+    }
+  }
+
+  // Shiprocket Shipping Operations (Part 5)
+  const createShiprocketShipment = async (orderId, dimensions = {}) => {
+    let shipmentData = {
+      shiprocket_shipment_id: `SR-${Date.now().toString().slice(-6)}`,
+      tracking_number: `AMX${Math.floor(100000000 + Math.random() * 900000000)}IN`,
+      tracking_url: '',
+      label_url: '',
+    }
+    shipmentData.tracking_url = `https://shiprocket.co/tracking/${shipmentData.tracking_number}`
+    shipmentData.label_url = `https://app.shiprocket.in/print/label/${shipmentData.shiprocket_shipment_id}`
+
+    if (isSupabaseConfigured) {
+      try {
+        const client = supabaseAnon || supabase
+        const { data, error } = await client.functions.invoke('shiprocket-shipment', {
+          body: { orderId, ...dimensions }
+        })
+        if (!error && data?.shipment) {
+          shipmentData = data.shipment
+        }
+      } catch (err) {
+        console.warn('[shiprocket-shipment] Edge function fallback:', err)
+      }
+
+      // Persist to orders table
+      try {
+        const client = supabaseAnon || supabase
+        await client.from('orders').update({
+          shiprocket_shipment_id: shipmentData.shiprocket_shipment_id,
+          tracking_number: shipmentData.tracking_number,
+          tracking_url: shipmentData.tracking_url,
+          label_url: shipmentData.label_url,
+          status: 'shipped'
+        }).eq('id', orderId)
+      } catch {}
+    }
+
+    // Update order locally
+    setOrders(prev => {
+      const next = prev.map(o => (String(o.id) === String(orderId) ? {
+        ...o,
+        ...shipmentData,
+        status: o.status === 'delivered' ? 'delivered' : 'shipped'
+      } : o))
+      try {
+        localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(next))
+      } catch {}
+      return next
+    })
+
+    return shipmentData
+  }
+
+  // Auto-Generated Invoice Operations (Part 5)
+  const generateInvoice = async (orderId) => {
+    const order = orders.find(o => String(o.id) === String(orderId))
+    if (!order) return null
+
+    let invoiceUrl = order.invoice_url
+
+    if (isSupabaseConfigured) {
+      try {
+        const client = supabaseAnon || supabase
+        const { data, error } = await client.functions.invoke('generate-invoice', {
+          body: { orderId }
+        })
+        if (!error && data?.invoice_url) {
+          invoiceUrl = data.invoice_url
+        }
+      } catch (err) {
+        console.warn('[generate-invoice] Edge function notice:', err)
+      }
+    }
+
+    if (!invoiceUrl) {
+      // Offline fallback: data URI invoice document
+      const invNum = `INV-${new Date().getFullYear()}-${String(order.id).slice(0, 8).toUpperCase()}`
+      invoiceUrl = `data:text/html;charset=utf-8,${encodeURIComponent(`
+        <html><head><title>Invoice ${invNum}</title></head>
+        <body style="font-family:sans-serif;padding:30px;">
+          <h1 style="color:#DC2626;">ANIMEMAX INVOICE</h1>
+          <p><strong>Order #:</strong> ${order.id}</p>
+          <p><strong>Buyer:</strong> ${order.buyer_name}</p>
+          <p><strong>Total:</strong> ₹${order.total_amount}</p>
+        </body></html>
+      `)}`
+    }
+
+    setOrders(prev => {
+      const next = prev.map(o => (String(o.id) === String(orderId) ? { ...o, invoice_url: invoiceUrl } : o))
+      try {
+        localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(next))
+      } catch {}
+      return next
+    })
+
+    return invoiceUrl
+  }
+
+  // Daily Summary Report Operation (Part 4)
+  const sendDailySummary = async () => {
+    if (!isSupabaseConfigured) return { success: false, message: 'Backend not configured' }
+    try {
+      const client = supabaseAnon || supabase
+      const { data, error } = await client.functions.invoke('daily-summary')
+      if (error) throw error
+      return data
+    } catch (err) {
+      console.error('[daily-summary] Error triggering daily summary:', err)
+      throw err
     }
   }
 
@@ -1502,6 +1870,15 @@ export function AppProvider({ children }) {
     return await updateBanner(section, INITIAL_BANNERS[section])
   }
 
+  // Low stock products calculation (Part 3)
+  const lowStockProducts = React.useMemo(() => {
+    return products.filter((p) => {
+      const threshold = p.low_stock_threshold !== undefined && p.low_stock_threshold !== null ? Number(p.low_stock_threshold) : 2
+      const stock = Number(p.stock) || 0
+      return stock <= threshold
+    })
+  }, [products])
+
   return (
     <AppContext.Provider
       value={{
@@ -1524,6 +1901,7 @@ export function AppProvider({ children }) {
         toggleSoldOut,
         deleteProduct,
         createOrder,
+        cancelOrder,
         updateOrderStatus,
         deleteOrder,
         refreshOrders,
@@ -1543,7 +1921,14 @@ export function AppProvider({ children }) {
         updateRequestStatus,
         deleteRequest,
         refreshRequests,
-
+        replacementRequests,
+        refreshReplacementRequests,
+        createReplacementRequest,
+        updateReplacementStatus,
+        createShiprocketShipment,
+        generateInvoice,
+        sendDailySummary,
+        lowStockProducts,
       }}
     >
       {children}

@@ -8,9 +8,11 @@ export default function FulfillmentDetailsModal({ isOpen, onClose, rate = 82 }) 
 
   if (!isOpen) return null
 
-  const pending = orders.filter((o) => o.status === 'pending').length
+  const pending = orders.filter((o) => o.status === 'pending' || o.status === 'qr_sent').length
   const confirmed = orders.filter((o) => o.status === 'payment_confirmed').length
   const shipped = orders.filter((o) => o.status === 'shipped').length
+  const delivered = orders.filter((o) => o.status === 'delivered').length
+  const replacements = orders.filter((o) => o.status === 'replacement_requested' || o.status === 'replacement_resolved').length
   const total = orders.length || 1
 
   return (
@@ -42,7 +44,7 @@ export default function FulfillmentDetailsModal({ isOpen, onClose, rate = 82 }) 
             <div>
               <span className="text-xs font-semibold text-emerald-800 uppercase tracking-wider">Current Fulfillment</span>
               <p className="text-3xl font-extrabold text-emerald-900 mt-0.5">{rate}%</p>
-              <p className="text-xs text-emerald-700 mt-1">Target: 90% orders shipped within 24 hours</p>
+              <p className="text-xs text-emerald-700 mt-1">Target: 90% orders fulfilled and delivered on time</p>
             </div>
             <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
               <CheckCircle2 className="w-6 h-6" />
@@ -75,28 +77,48 @@ export default function FulfillmentDetailsModal({ isOpen, onClose, rate = 82 }) 
             <h4 className="text-xs font-bold text-[#111827]">Order Queue Status</h4>
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-between">
-                <span className="text-[#6B7280]">Shipped & Dispatched</span>
-                <span className="font-semibold text-emerald-600">{shipped} orders</span>
+                <span className="text-[#6B7280]">Delivered to Buyer</span>
+                <span className="font-semibold text-emerald-600">{delivered} orders</span>
               </div>
               <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
-                <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${Math.round((shipped / total) * 100)}%` }} />
+                <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${Math.round((delivered / total) * 100)}%` }} />
+              </div>
+
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-[#6B7280]">Shipped / In Transit</span>
+                <span className="font-semibold text-amber-600">{shipped} orders</span>
+              </div>
+              <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
+                <div className="bg-amber-500 h-full rounded-full" style={{ width: `${Math.round((shipped / total) * 100)}%` }} />
               </div>
 
               <div className="flex items-center justify-between pt-1">
                 <span className="text-[#6B7280]">Payment Verified (Awaiting Dispatch)</span>
-                <span className="font-semibold text-[#111827]">{confirmed} orders</span>
+                <span className="font-semibold text-indigo-600">{confirmed} orders</span>
               </div>
               <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
-                <div className="bg-blue-500 h-full rounded-full" style={{ width: `${Math.round((confirmed / total) * 100)}%` }} />
+                <div className="bg-indigo-500 h-full rounded-full" style={{ width: `${Math.round((confirmed / total) * 100)}%` }} />
               </div>
 
               <div className="flex items-center justify-between pt-1">
                 <span className="text-[#6B7280]">Pending QR / Awaiting Payment</span>
-                <span className="font-semibold text-amber-600">{pending} orders</span>
+                <span className="font-semibold text-blue-600">{pending} orders</span>
               </div>
               <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
-                <div className="bg-amber-500 h-full rounded-full" style={{ width: `${Math.round((pending / total) * 100)}%` }} />
+                <div className="bg-blue-500 h-full rounded-full" style={{ width: `${Math.round((pending / total) * 100)}%` }} />
               </div>
+
+              {replacements > 0 && (
+                <>
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-[#6B7280]">Replacement Cases</span>
+                    <span className="font-semibold text-purple-600">{replacements} orders</span>
+                  </div>
+                  <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
+                    <div className="bg-purple-500 h-full rounded-full" style={{ width: `${Math.round((replacements / total) * 100)}%` }} />
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

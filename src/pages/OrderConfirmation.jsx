@@ -13,6 +13,7 @@ import { formatPrice } from '../utils/formatPrice'
 import { OrderStatusBadge } from '../components/common/Badge'
 import { OWNER_WHATSAPP, OWNER_UPI_ID } from '../lib/clerkClient'
 import { cldUrl } from '../lib/cloudinary'
+import OrderLifecycleActions from '../components/storefront/OrderLifecycleActions'
 
 export default function OrderConfirmation() {
   const { orderId } = useParams()
@@ -168,6 +169,9 @@ export default function OrderConfirmation() {
           <span>Total Amount Payable</span>
           <span className="text-lg text-[#DC2626]">{formatPrice(order.total_amount)}</span>
         </div>
+
+        {/* Order Lifecycle Actions: 24h Cancel, 5-Day Replacement, Tracking, Invoice */}
+        <OrderLifecycleActions order={order} />
       </div>
 
       {/* ── Bottom Actions ───────────────────────────────────────────── */}

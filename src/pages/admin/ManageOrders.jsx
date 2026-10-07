@@ -27,7 +27,11 @@ export default function ManageOrders() {
   // Derive filtered orders reactively on every change to orders state or active tab
   const filteredOrders = useMemo(() => {
     return orders.filter((o) => {
-      const matchesStatus = statusFilter === 'all' || o.status === statusFilter
+      const matchesStatus =
+        statusFilter === 'all' ||
+        (statusFilter === 'replacement'
+          ? o.status === 'replacement_requested' || o.status === 'replacement_resolved'
+          : o.status === statusFilter)
       const q = searchQuery.toLowerCase().trim()
       const matchesSearch =
         !q ||
@@ -46,6 +50,8 @@ export default function ManageOrders() {
     qr_sent: orders.filter((o) => o.status === 'qr_sent').length,
     payment_confirmed: orders.filter((o) => o.status === 'payment_confirmed').length,
     shipped: orders.filter((o) => o.status === 'shipped').length,
+    delivered: orders.filter((o) => o.status === 'delivered').length,
+    replacement: orders.filter((o) => o.status === 'replacement_requested' || o.status === 'replacement_resolved').length,
     cancelled: orders.filter((o) => o.status === 'cancelled').length,
   }), [orders])
 
@@ -91,6 +97,8 @@ export default function ManageOrders() {
             { id: 'qr_sent', label: 'QR Sent' },
             { id: 'payment_confirmed', label: 'Payment Verified' },
             { id: 'shipped', label: 'Shipped' },
+            { id: 'delivered', label: 'Delivered' },
+            { id: 'replacement', label: 'Replacements' },
             { id: 'cancelled', label: 'Cancelled' },
           ].map((tab) => (
             <button

@@ -15,7 +15,9 @@ import {
   Eye,
   RefreshCw,
   SlidersHorizontal,
-  ExternalLink
+  ExternalLink,
+  AlertTriangle,
+  Send
 } from 'lucide-react'
 import { 
   ResponsiveContainer, 
@@ -35,11 +37,40 @@ import { cldUrl } from '../../lib/cloudinary'
 import FulfillmentDetailsModal from '../../components/admin/FulfillmentDetailsModal'
 
 export default function Dashboard() {
-  const { products, orders, buyerProfiles, refreshAllAdminData, isSyncingAll } = useApp()
+  const { 
+    products, 
+    orders, 
+    buyerProfiles, 
+    refreshAllAdminData, 
+    isSyncingAll, 
+    lowStockProducts = [], 
+    sendDailySummary 
+  } = useApp()
 
   const [dateRangeKey, setDateRangeKey] = useState('30d')
   const [activeMenu, setActiveMenu] = useState(null)
   const [isFulfillmentModalOpen, setIsFulfillmentModalOpen] = useState(false)
+  const [isSendingSummary, setIsSendingSummary] = useState(false)
+  const [summaryNotification, setSummaryNotification] = useState(null)
+
+  const handleSendDailyReport = async () => {
+    if (!sendDailySummary) return
+    setIsSendingSummary(true)
+    setSummaryNotification(null)
+    try {
+      const res = await sendDailySummary()
+      if (res.success) {
+        setSummaryNotification({ type: 'success', message: 'Daily store summary dispatched to owner.' })
+      } else {
+        setSummaryNotification({ type: 'error', message: res.error || 'Failed to send summary report' })
+      }
+    } catch (err) {
+      setSummaryNotification({ type: 'error', message: err.message || 'Error triggering report' })
+    } finally {
+      setIsSendingSummary(false)
+      setTimeout(() => setSummaryNotification(null), 6000)
+    }
+  }
 
   // Ensure fresh shared data across all tables on mount
   useEffect(() => {
@@ -55,6 +86,8 @@ export default function Dashboard() {
     pendingPct,
     confirmedPct,
     shippedPct,
+    deliveredPct,
+    replacementPct,
     totalStatusOrders
   } = useMemo(() => {
     const daysMap = { '7d': 7, '30d': 30, '90d': 90 }
@@ -101,7 +134,9 @@ export default function Dashboard() {
     const pendingCount = currentOrders.filter((o) => o.status === 'pending' || o.status === 'qr_sent').length
     const confirmedCount = currentOrders.filter((o) => o.status === 'payment_confirmed').length
     const shippedCount = currentOrders.filter((o) => o.status === 'shipped').length
-    const totalStatusOrders = pendingCount + confirmedCount + shippedCount
+    const deliveredCount = currentOrders.filter((o) => o.status === 'delivered').length
+    const replacementCount = currentOrders.filter((o) => o.status === 'replacement_requested' || o.status === 'replacement_resolved').length
+    const totalStatusOrders = pendingCount + confirmedCount + shippedCount + deliveredCount + replacementCount
 
     const calcDelta = (curr, prev) => {
       if (prev === 0) {
@@ -172,9 +207,10 @@ export default function Dashboard() {
       isPeak: maxDayOrders > 0 && dayCounts[day] === maxDayOrders
     }))
 
-    // Fulfillment Rate
+    // Fulfillment Rate (Shipped + Delivered out of total active orders)
+    const fulfilledCount = shippedCount + deliveredCount
     const fulfillmentRate = totalStatusOrders > 0
-      ? Math.round((shippedCount / totalStatusOrders) * 100)
+      ? Math.round((fulfilledCount / totalStatusOrders) * 100)
       : 100
 
     const startRange = new Date(now - days * msInDay).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
@@ -199,7 +235,9 @@ export default function Dashboard() {
       orderStatusDistribution: {
         pending: pendingCount,
         confirmed: confirmedCount,
-        shipped: shippedCount
+        shipped: shippedCount,
+        delivered: deliveredCount,
+        replacement: replacementCount
       },
       busiestDayData,
       fulfillmentRate
@@ -207,7 +245,9 @@ export default function Dashboard() {
 
     const pendingPct = totalStatusOrders > 0 ? Math.round((pendingCount / totalStatusOrders) * 100) : 0
     const confirmedPct = totalStatusOrders > 0 ? Math.round((confirmedCount / totalStatusOrders) * 100) : 0
-    const shippedPct = totalStatusOrders > 0 ? 100 - pendingPct - confirmedPct : 0
+    const shippedPct = totalStatusOrders > 0 ? Math.round((shippedCount / totalStatusOrders) * 100) : 0
+    const deliveredPct = totalStatusOrders > 0 ? Math.round((deliveredCount / totalStatusOrders) * 100) : 0
+    const replacementPct = totalStatusOrders > 0 ? Math.max(0, 100 - pendingPct - confirmedPct - shippedPct - deliveredPct) : 0
 
     // Best Selling Products dynamically calculated from actual orders items
     const salesMap = {}
@@ -241,6 +281,8 @@ export default function Dashboard() {
       pendingPct,
       confirmedPct,
       shippedPct,
+      deliveredPct,
+      replacementPct,
       totalStatusOrders
     }
   }, [orders, products, dateRangeKey])
@@ -263,8 +305,18 @@ export default function Dashboard() {
           </p>
         </div>
 
-        {/* Right-aligned Date Range + Period Filter + Sync Button */}
-        <div className="flex items-center gap-3 self-start sm:self-auto">
+        {/* Right-aligned Date Range + Period Filter + Sync Button + Daily Report */}
+        <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
+          <button
+            onClick={handleSendDailyReport}
+            disabled={isSendingSummary}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-[#EDEDED] text-xs font-semibold text-[#111827] hover:bg-gray-50 shadow-2xs transition-all disabled:opacity-60"
+            title="Dispatch daily store summary to owner (WhatsApp / Email)"
+          >
+            <Send className={`w-3.5 h-3.5 ${isSendingSummary ? 'animate-pulse text-indigo-600' : 'text-[#6B7280]'}`} />
+            <span className="hidden sm:inline">{isSendingSummary ? 'Sending...' : 'Send Daily Report'}</span>
+          </button>
+
           <button
             onClick={() => refreshAllAdminData && refreshAllAdminData(true)}
             disabled={isSyncingAll}
@@ -293,6 +345,69 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Notification Toast for Daily Report */}
+      {summaryNotification && (
+        <div className={`p-3.5 rounded-xl text-xs font-medium border flex items-center justify-between ${
+          summaryNotification.type === 'success' 
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+            : 'bg-rose-50 border-rose-200 text-rose-800'
+        }`}>
+          <span>{summaryNotification.message}</span>
+          <button onClick={() => setSummaryNotification(null)} className="text-[11px] underline font-semibold ml-3">
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Low Stock Alert Banner */}
+      {lowStockProducts && lowStockProducts.length > 0 && (
+        <div className="bg-amber-50/80 border border-amber-200/90 rounded-2xl p-4 sm:p-5 shadow-2xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center text-amber-700 shrink-0 mt-0.5">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-amber-900 flex items-center gap-2">
+                  <span>Low Stock Alert</span>
+                  <span className="px-2 py-0.5 text-[11px] font-extrabold rounded-full bg-amber-200/80 text-amber-900">
+                    {lowStockProducts.length} item{lowStockProducts.length === 1 ? '' : 's'}
+                  </span>
+                </h3>
+                <p className="text-xs text-amber-800/90 mt-0.5">
+                  The following items have reached or fallen below their low stock threshold. Restock soon to prevent order delays.
+                </p>
+                <div className="flex flex-wrap gap-2 mt-2.5">
+                  {lowStockProducts.slice(0, 5).map((p) => (
+                    <span 
+                      key={p.id}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-xs text-gray-800 font-medium shadow-2xs"
+                    >
+                      <span className="font-semibold">{p.name}</span>
+                      <span className="text-[11px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded">
+                        {p.stock} left (threshold: {p.low_stock_threshold ?? 2})
+                      </span>
+                    </span>
+                  ))}
+                  {lowStockProducts.length > 5 && (
+                    <span className="text-xs font-semibold text-amber-800 self-center">
+                      +{lowStockProducts.length - 5} more
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <Link
+              to="/admin/products"
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shrink-0 shadow-xs transition-colors self-start sm:self-auto"
+            >
+              <span>Manage Inventory</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* 3. Stat Cards (Top Row — 4 cards) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
@@ -516,7 +631,7 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </div>
 
-          {/* Segmented Horizontal Bar below chart (Pending / Payment Confirmed / Shipped) */}
+          {/* Segmented Horizontal Bar below chart (Pending / Payment Confirmed / Shipped / Delivered / Replacements) */}
           <div className="pt-4 border-t border-[#EDEDED] space-y-3">
             <div className="flex items-center justify-between text-xs">
               <span className="font-semibold text-[#111827]">Order Fulfillment Pipeline</span>
@@ -526,45 +641,81 @@ export default function Dashboard() {
             {/* Segmented Progress Bar */}
             <div className="w-full h-3 rounded-full bg-gray-100 flex overflow-hidden p-0.5 gap-0.5">
               {/* Blue segment: Pending */}
-              <div 
-                className="bg-[#3B82F6] h-full rounded-l-full transition-all duration-500 hover:brightness-105" 
-                style={{ width: `${pendingPct}%` }}
-                title={`Pending: ${activePeriod.orderStatusDistribution.pending} (${pendingPct}%)`}
-              />
-              {/* Green segment: Payment Confirmed */}
-              <div 
-                className="bg-[#16A34A] h-full transition-all duration-500 hover:brightness-105" 
-                style={{ width: `${confirmedPct}%` }}
-                title={`Payment Confirmed: ${activePeriod.orderStatusDistribution.confirmed} (${confirmedPct}%)`}
-              />
-              {/* Orange segment: Shipped */}
-              <div 
-                className="bg-[#F59E0B] h-full rounded-r-full transition-all duration-500 hover:brightness-105" 
-                style={{ width: `${shippedPct}%` }}
-                title={`Shipped: ${activePeriod.orderStatusDistribution.shipped} (${shippedPct}%)`}
-              />
+              {pendingPct > 0 && (
+                <div 
+                  className="bg-[#3B82F6] h-full rounded-l-full transition-all duration-500 hover:brightness-105" 
+                  style={{ width: `${pendingPct}%` }}
+                  title={`Pending: ${activePeriod.orderStatusDistribution.pending} (${pendingPct}%)`}
+                />
+              )}
+              {/* Indigo segment: Payment Confirmed */}
+              {confirmedPct > 0 && (
+                <div 
+                  className="bg-[#6366F1] h-full transition-all duration-500 hover:brightness-105" 
+                  style={{ width: `${confirmedPct}%` }}
+                  title={`Payment Confirmed: ${activePeriod.orderStatusDistribution.confirmed} (${confirmedPct}%)`}
+                />
+              )}
+              {/* Amber segment: Shipped */}
+              {shippedPct > 0 && (
+                <div 
+                  className="bg-[#F59E0B] h-full transition-all duration-500 hover:brightness-105" 
+                  style={{ width: `${shippedPct}%` }}
+                  title={`Shipped: ${activePeriod.orderStatusDistribution.shipped} (${shippedPct}%)`}
+                />
+              )}
+              {/* Emerald segment: Delivered */}
+              {deliveredPct > 0 && (
+                <div 
+                  className="bg-[#10B981] h-full transition-all duration-500 hover:brightness-105" 
+                  style={{ width: `${deliveredPct}%` }}
+                  title={`Delivered: ${activePeriod.orderStatusDistribution.delivered} (${deliveredPct}%)`}
+                />
+              )}
+              {/* Purple segment: Replacements */}
+              {replacementPct > 0 && (
+                <div 
+                  className="bg-[#8B5CF6] h-full rounded-r-full transition-all duration-500 hover:brightness-105" 
+                  style={{ width: `${replacementPct}%` }}
+                  title={`Replacements: ${activePeriod.orderStatusDistribution.replacement} (${replacementPct}%)`}
+                />
+              )}
             </div>
 
             {/* Segment Legend with Counts & Percentages */}
-            <div className="flex flex-wrap items-center gap-4 sm:gap-6 pt-1 text-xs">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-3 sm:gap-5 pt-1 text-xs">
+              <div className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-[#3B82F6]" />
                 <span className="text-[#6B7280]">
                   Pending: <strong className="text-[#111827]">{activePeriod.orderStatusDistribution.pending}</strong> ({pendingPct}%)
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#16A34A]" />
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#6366F1]" />
                 <span className="text-[#6B7280]">
-                  Payment Confirmed: <strong className="text-[#111827]">{activePeriod.orderStatusDistribution.confirmed}</strong> ({confirmedPct}%)
+                  Confirmed: <strong className="text-[#111827]">{activePeriod.orderStatusDistribution.confirmed}</strong> ({confirmedPct}%)
                 </span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B]" />
                 <span className="text-[#6B7280]">
                   Shipped: <strong className="text-[#111827]">{activePeriod.orderStatusDistribution.shipped}</strong> ({shippedPct}%)
                 </span>
               </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#10B981]" />
+                <span className="text-[#6B7280]">
+                  Delivered: <strong className="text-[#111827]">{activePeriod.orderStatusDistribution.delivered}</strong> ({deliveredPct}%)
+                </span>
+              </div>
+              {activePeriod.orderStatusDistribution.replacement > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#8B5CF6]" />
+                  <span className="text-[#6B7280]">
+                    Replacements: <strong className="text-[#111827]">{activePeriod.orderStatusDistribution.replacement}</strong> ({replacementPct}%)
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 

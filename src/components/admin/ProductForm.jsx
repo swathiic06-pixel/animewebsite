@@ -45,6 +45,8 @@ export default function ProductForm({ initialProduct = null, onSubmit, onCancel,
     hw_num: initialProduct?.hw_num !== undefined ? initialProduct.hw_num : '',
     image_url: initialProduct?.image_url || '',
     stock: initialProduct?.stock !== undefined ? initialProduct.stock : 10,
+    low_stock_threshold: initialProduct?.low_stock_threshold !== undefined ? initialProduct.low_stock_threshold : 2,
+    manually_sold_out: initialProduct?.manually_sold_out !== undefined ? Boolean(initialProduct.manually_sold_out) : false,
     in_stock: initialProduct?.in_stock !== undefined ? Boolean(initialProduct.in_stock) : true,
     display_section: initialProduct?.display_section || 'grid',
     sort_order: initialProduct?.sort_order !== undefined ? initialProduct.sort_order : 0,
@@ -338,7 +340,9 @@ export default function ProductForm({ initialProduct = null, onSubmit, onCancel,
       category: catName,
       price: parseFloat(formData.price),
       stock: parseInt(formData.stock) || 0,
-      in_stock: Boolean(formData.in_stock),
+      low_stock_threshold: parseInt(formData.low_stock_threshold) !== undefined ? parseInt(formData.low_stock_threshold) : 2,
+      manually_sold_out: Boolean(formData.manually_sold_out),
+      in_stock: (parseInt(formData.stock) || 0) > 0 && !Boolean(formData.manually_sold_out),
       hw_num: hwParsed,
       sort_order: sortOrderParsed,
     })
@@ -415,11 +419,11 @@ export default function ProductForm({ initialProduct = null, onSubmit, onCancel,
         </div>
       </div>
 
-      {/* Stock and In-Stock Toggle */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+      {/* Stock and Low Stock Threshold (Part 3 Auto-Stock) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
         <div>
           <label className="block text-xs font-semibold text-[#111827] mb-1.5">
-            Inventory Units
+            Inventory Units <span className="text-rose-500">*</span>
           </label>
           <input
             type="number"
@@ -429,19 +433,26 @@ export default function ProductForm({ initialProduct = null, onSubmit, onCancel,
             onChange={handleChange}
             className="w-full bg-white border border-[#EDEDED] rounded-xl px-3.5 py-2 text-sm text-[#111827] placeholder-[#9CA3AF] focus:outline-none focus:border-[#3B82F6] focus:ring-1 focus:ring-[#3B82F6]"
           />
+          <p className="text-[11px] text-[#6B7280] mt-1">
+            Auto Sold Out: Items automatically flip to Sold Out when units reach 0.
+          </p>
         </div>
 
-        <div className="pt-0 sm:pt-6">
-          <label className="flex items-center gap-2.5 text-xs text-[#111827] font-semibold cursor-pointer bg-[#F5F6F8] p-2.5 rounded-xl border border-[#EDEDED] hover:bg-gray-100 transition-colors">
-            <input
-              type="checkbox"
-              name="in_stock"
-              checked={Boolean(formData.in_stock)}
-              onChange={handleChange}
-              className="rounded border-[#EDEDED] text-[#3B82F6] focus:ring-[#3B82F6] w-4 h-4 accent-[#3B82F6]"
-            />
-            <span>Mark as In-Stock on Storefront</span>
+        <div>
+          <label className="block text-xs font-semibold text-[#111827] mb-1.5">
+            Low Stock Alert Threshold
           </label>
+          <input
+            type="number"
+            name="low_stock_threshold"
+            min="1"
+            value={formData.low_stock_threshold}
+            onChange={handleChange}
+            className="w-full bg-white border border-[#EDEDED] rounded-xl px-3.5 py-2 text-sm text-[#111827] placeholder-[#9CA3AF] focus:outline-none focus:border-[#3B82F6] focus:ring-1 focus:ring-[#3B82F6]"
+          />
+          <p className="text-[11px] text-[#6B7280] mt-1">
+            Triggers an alert on the Admin Dashboard when remaining units ≤ this count.
+          </p>
         </div>
       </div>
 

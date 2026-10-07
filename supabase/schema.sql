@@ -51,7 +51,14 @@ create table if not exists public.orders (
     buyer_address text not null,
     items jsonb not null, -- Array of { product_id, name, qty, price, image_url }
     total_amount numeric not null check (total_amount >= 0),
-    status text not null default 'pending' check (status in ('pending', 'qr_sent', 'payment_confirmed', 'shipped', 'cancelled')),
+    status text not null default 'pending' check (status in ('pending', 'qr_sent', 'payment_confirmed', 'shipped', 'delivered', 'cancelled', 'replacement_requested', 'replacement_resolved')),
+    cancelled_at timestamp with time zone,
+    delivered_at timestamp with time zone,
+    shiprocket_shipment_id text,
+    tracking_number text,
+    tracking_url text,
+    label_url text,
+    invoice_url text,
     created_at timestamp with time zone default now()
 );
 
@@ -59,6 +66,34 @@ create table if not exists public.orders (
 create index if not exists idx_orders_user_id on public.orders(user_id);
 create index if not exists idx_orders_status on public.orders(status);
 create index if not exists idx_orders_created_at on public.orders(created_at desc);
+create index if not exists idx_orders_cancelled_at on public.orders(cancelled_at);
+create index if not exists idx_orders_delivered_at on public.orders(delivered_at);
+
+-- 3b. ORDER ITEMS TABLE (Relational normalization)
+create table if not exists public.order_items (
+    id uuid primary key default gen_random_uuid(),
+    order_id uuid not null references public.orders(id) on delete cascade,
+    product_id text not null references public.products(id) on delete cascade,
+    quantity integer not null check (quantity > 0),
+    price_at_purchase numeric not null check (price_at_purchase >= 0)
+);
+
+create index if not exists idx_order_items_order_id on public.order_items(order_id);
+create index if not exists idx_order_items_product_id on public.order_items(product_id);
+
+-- 3c. REPLACEMENT REQUESTS TABLE (5-day post-delivery replacement requests)
+create table if not exists public.replacement_requests (
+    id uuid primary key default gen_random_uuid(),
+    order_id uuid not null references public.orders(id) on delete cascade,
+    reason text not null,
+    reference_image_url text,
+    status text not null default 'pending' check (status in ('pending', 'approved', 'declined', 'completed')),
+    created_at timestamp with time zone default now()
+);
+
+create index if not exists idx_replacement_requests_order_id on public.replacement_requests(order_id);
+create index if not exists idx_replacement_requests_status on public.replacement_requests(status);
+create index if not exists idx_replacement_requests_created_at on public.replacement_requests(created_at desc);
 
 -- =========================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES

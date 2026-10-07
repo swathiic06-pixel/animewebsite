@@ -11,6 +11,7 @@ import { formatPrice } from '../../utils/formatPrice'
 import { OrderStatusBadge } from '../../components/common/Badge'
 import { OWNER_WHATSAPP } from '../../lib/clerkClient'
 import { cldUrl } from '../../lib/cloudinary'
+import OrderLifecycleActions from '../../components/storefront/OrderLifecycleActions'
 
 export default function OrderHistory() {
   const { orders, mockUser } = useApp()
@@ -74,7 +75,7 @@ export default function OrderHistory() {
 
               {/* Items in order */}
               <div className="space-y-2.5">
-                {order.items.map((item, idx) => (
+                {(order.items || []).map((item, idx) => (
                   <div key={idx} className="flex items-center justify-between gap-3 text-sm">
                     <div className="flex items-center gap-3">
                       <img
@@ -94,6 +95,9 @@ export default function OrderHistory() {
                   </div>
                 ))}
               </div>
+
+              {/* Order Lifecycle Actions: 24h Cancel, 5-Day Replacement, Courier Tracking, Invoice */}
+              <OrderLifecycleActions order={order} />
 
               {/* Footer: Total + Actions */}
               <div className="pt-3 border-t border-[#E5E5E5] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-sm">

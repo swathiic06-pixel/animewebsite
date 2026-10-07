@@ -57,6 +57,21 @@ export function OrderStatusBadge({ status }) {
       bg: 'bg-purple-50 text-purple-800 border-purple-200',
       dot: 'bg-purple-500'
     },
+    delivered: {
+      label: 'Delivered',
+      bg: 'bg-teal-50 text-teal-800 border-teal-200',
+      dot: 'bg-teal-500'
+    },
+    replacement_requested: {
+      label: 'Replacement Requested',
+      bg: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+      dot: 'bg-indigo-500'
+    },
+    replacement_resolved: {
+      label: 'Replacement Resolved',
+      bg: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+      dot: 'bg-emerald-500'
+    },
     cancelled: {
       label: 'Cancelled',
       bg: 'bg-rose-50 text-rose-800 border-rose-200',
@@ -71,6 +86,26 @@ export function OrderStatusBadge({ status }) {
       <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${current.dot}`}></span>
       {current.label}
     </span>
+  )
+}
+
+/**
+ * TrackingBadge — displays courier tracking number with link
+ */
+export function TrackingBadge({ trackingNumber, trackingUrl }) {
+  if (!trackingNumber) return null
+
+  return (
+    <a
+      href={trackingUrl || `https://shiprocket.co/tracking/${trackingNumber}`}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono font-semibold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition-colors"
+      title="Track Shipment on Shiprocket"
+    >
+      <span>🚚 {trackingNumber}</span>
+      <span className="text-[10px] text-blue-500 underline font-sans">Track</span>
+    </a>
   )
 }
 
