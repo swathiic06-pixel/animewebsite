@@ -98,10 +98,12 @@ Deno.serve(async (req) => {
     const resendApiKey = Deno.env.get('RESEND_API_KEY')
     const sendgridApiKey = Deno.env.get('SENDGRID_API_KEY')
     let emailSent = false
+    let emailError: string | null = null
 
     // 1. Send via Resend if configured
     if (resendApiKey) {
       try {
+        const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'AnimeMax Store <onboarding@resend.dev>'
         const res = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
@@ -109,7 +111,7 @@ Deno.serve(async (req) => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            from: 'AnimeMax Store <orders@animemax.store>',
+            from: fromEmail,
             to: [ownerEmail],
             subject: emailSubject,
             html: emailHtml,
@@ -119,9 +121,11 @@ Deno.serve(async (req) => {
           emailSent = true
           console.log(`[Resend] Successfully sent order alert to ${ownerEmail}`)
         } else {
-          console.warn('[Resend] Error:', await res.text())
+          emailError = await res.text()
+          console.warn('[Resend] Error:', emailError)
         }
       } catch (err) {
+        emailError = err instanceof Error ? err.message : String(err)
         console.error('[Resend] Fetch error:', err)
       }
     } else if (sendgridApiKey) {
@@ -195,6 +199,7 @@ Deno.serve(async (req) => {
         success: true,
         orderId: order.id,
         emailSent,
+        emailError,
         whatsappSent,
         delivered: emailSent || whatsappSent,
       }),

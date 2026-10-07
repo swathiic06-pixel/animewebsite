@@ -147,9 +147,11 @@ Deno.serve(async (req) => {
     const resendApiKey = Deno.env.get('RESEND_API_KEY')
     const sendgridApiKey = Deno.env.get('SENDGRID_API_KEY')
     let emailSent = false
+    let emailError: string | null = null
 
     if (resendApiKey) {
       try {
+        const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'AnimeMax Reports <onboarding@resend.dev>'
         const res = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
@@ -157,14 +159,21 @@ Deno.serve(async (req) => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            from: 'AnimeMax Store <reports@animemax.store>',
+            from: fromEmail,
             to: [ownerEmail],
             subject: emailSubject,
             html: emailHtml,
           }),
         })
-        if (res.ok) emailSent = true
+        if (res.ok) {
+          emailSent = true
+          console.log(`[daily-summary] Successfully sent summary report to ${ownerEmail}`)
+        } else {
+          emailError = await res.text()
+          console.warn('[daily-summary] Resend error:', emailError)
+        }
       } catch (e) {
+        emailError = e instanceof Error ? e.message : String(e)
         console.error('[daily-summary] Resend error:', e)
       }
     } else if (sendgridApiKey) {
@@ -184,6 +193,7 @@ Deno.serve(async (req) => {
         })
         if (res.ok) emailSent = true
       } catch (e) {
+        emailError = e instanceof Error ? e.message : String(e)
         console.error('[daily-summary] SendGrid error:', e)
       }
     }
@@ -204,6 +214,7 @@ Deno.serve(async (req) => {
           })),
         },
         emailSent,
+        emailError,
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
