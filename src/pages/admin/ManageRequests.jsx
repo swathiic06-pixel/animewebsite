@@ -34,7 +34,7 @@ export default function ManageRequests() {
     orders = []
   } = useApp()
 
-  const [mainTab, setMainTab] = useState('replacements') // 'replacements' | 'products'
+  const [mainTab, setMainTab] = useState('products') // 'products' | 'replacements'
   const [statusFilter, setStatusFilter] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [isRefreshing, setIsRefreshing] = useState(false)

@@ -28,14 +28,6 @@ export default function OrderLifecycleActions({ order }) {
   const [showCancelModal, setShowCancelModal] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const [cancelError, setCancelError] = useState('')
-
-  const [showReplacementModal, setShowReplacementModal] = useState(false)
-  const [replacementReason, setReplacementReason] = useState('')
-  const [defectPhotoUrl, setDefectPhotoUrl] = useState('')
-  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false)
-  const [isSubmittingReplacement, setIsSubmittingReplacement] = useState(false)
-  const [replacementError, setReplacementError] = useState('')
-
   const [isGeneratingInvoice, setIsGeneratingInvoice] = useState(false)
 
   // ── 1. Part 1: Cancellation Window Calculation ──────────────────────────
@@ -92,45 +84,6 @@ export default function OrderLifecycleActions({ order }) {
       setCancelError(err?.message || 'Failed to cancel order.')
     } finally {
       setIsCancelling(false)
-    }
-  }
-
-  const handlePhotoUpload = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setIsUploadingPhoto(true)
-    setReplacementError('')
-    try {
-      const res = await uploadImage(file, PRESETS.products)
-      setDefectPhotoUrl(res.secure_url)
-    } catch (err) {
-      setReplacementError('Failed to upload image. You can still submit without a photo.')
-    } finally {
-      setIsUploadingPhoto(false)
-    }
-  }
-
-  const handleSubmitReplacement = async (e) => {
-    e.preventDefault()
-    if (!replacementReason.trim()) {
-      setReplacementError('Please describe the issue or defect.')
-      return
-    }
-    setIsSubmittingReplacement(true)
-    setReplacementError('')
-    try {
-      await createReplacementRequest({
-        orderId: order.id,
-        reason: replacementReason.trim(),
-        referenceImageUrl: defectPhotoUrl || null,
-      })
-      setShowReplacementModal(false)
-      setReplacementReason('')
-      setDefectPhotoUrl('')
-    } catch (err) {
-      setReplacementError(err?.message || 'Failed to submit replacement request.')
-    } finally {
-      setIsSubmittingReplacement(false)
     }
   }
 
@@ -213,33 +166,11 @@ export default function OrderLifecycleActions({ order }) {
             ) : null
           )}
 
-          {/* Part 2: Replacement Window Timer */}
-          {isDelivered && (
-            canRequestReplacement ? (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-teal-50 text-teal-800 border border-teal-200 font-medium">
-                <ArrowsClockwise size={14} className="text-teal-600" />
-                <span>{formatDaysCountdown(replacementMsRemaining)} to request replacement</span>
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 text-[#6B6B6B]">
-                <Clock size={13} />
-                <span>Replacement window closed (5 days post-delivery)</span>
-              </span>
-            )
-          )}
-
-          {/* Replacement Request Active Badge */}
-          {isReplacementRequested && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200 font-medium">
-              <ArrowsClockwise size={14} className="text-indigo-600 animate-spin" />
-              <span>Replacement Request Under Review</span>
-            </span>
-          )}
-
-          {isReplacementResolved && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-medium">
-              <CheckCircle size={14} className="text-emerald-600" />
-              <span>Replacement Resolved &amp; Shipped</span>
+          {/* Order Level Replacement Status Notice */}
+          {existingReplacement && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-800 border border-blue-200 font-medium">
+              <ArrowsClockwise size={13} className="text-blue-600" />
+              <span>Replacement Request Active for Item</span>
             </span>
           )}
         </div>
@@ -252,7 +183,7 @@ export default function OrderLifecycleActions({ order }) {
             <button
               onClick={handleDownloadInvoice}
               disabled={isGeneratingInvoice}
-              className="sf-btn-secondary text-xs h-8 px-3 gap-1.5 font-medium"
+              className="sf-btn-secondary text-xs h-8 px-3 gap-1.5 font-medium cursor-pointer"
               style={{ height: '32px', minHeight: 'unset', fontSize: '12px' }}
               title="Download official Tax Invoice"
             >
@@ -265,21 +196,10 @@ export default function OrderLifecycleActions({ order }) {
           {canCancel && (
             <button
               onClick={() => setShowCancelModal(true)}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-[10px] text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors"
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-[10px] text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors cursor-pointer"
             >
               <XCircle size={14} weight="bold" />
               <span>Cancel Order</span>
-            </button>
-          )}
-
-          {/* Part 2: Request Replacement Button (No refund/return words!) */}
-          {canRequestReplacement && (
-            <button
-              onClick={() => setShowReplacementModal(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-semibold text-white bg-[#111111] hover:bg-black transition-colors"
-            >
-              <ArrowsClockwise size={14} weight="bold" />
-              <span>Request Replacement</span>
             </button>
           )}
 
@@ -327,100 +247,6 @@ export default function OrderLifecycleActions({ order }) {
               </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* ── Request Replacement Modal (Part 2) ────────────────────── */}
-      {showReplacementModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-          <form
-            onSubmit={handleSubmitReplacement}
-            className="bg-white rounded-[16px] max-w-lg w-full p-6 space-y-4 shadow-xl border border-[#E5E5E5]"
-          >
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="text-base font-bold text-[#111111]">Request Replacement for Order #{order.id}</h3>
-                <p className="text-xs text-[#6B6B6B] mt-0.5">
-                  Available within 5 days of delivery. If your collectible arrived damaged or defective, we will send an exchange unit.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowReplacementModal(false)}
-                className="text-[#6B6B6B] hover:text-[#111111] p-1"
-              >
-                ✕
-              </button>
-            </div>
-
-            {replacementError && (
-              <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700">
-                {replacementError}
-              </div>
-            )}
-
-            <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-[#111111]">
-                Reason for Replacement <span className="text-rose-500">*</span>
-              </label>
-              <textarea
-                value={replacementReason}
-                onChange={(e) => setReplacementReason(e.target.value)}
-                placeholder="Describe the defect or damage in detail (e.g. cracked figure arm, broken blister pack)..."
-                rows={3}
-                required
-                className="w-full text-xs p-3 rounded-xl border border-[#E5E5E5] bg-[#F8F8F6] focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#111111]"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-[#111111]">
-                Photo of Issue (Optional but Recommended)
-              </label>
-              <div className="flex items-center gap-3">
-                <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[#E5E5E5] bg-[#F8F8F6] hover:bg-gray-100 cursor-pointer text-xs font-medium text-[#111111] transition-colors">
-                  <UploadSimple size={16} />
-                  <span>{isUploadingPhoto ? 'Uploading...' : 'Upload Reference Photo'}</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handlePhotoUpload}
-                    disabled={isUploadingPhoto}
-                    className="hidden"
-                  />
-                </label>
-
-                {defectPhotoUrl && (
-                  <div className="flex items-center gap-2 text-xs text-emerald-600 font-medium">
-                    <img
-                      src={defectPhotoUrl}
-                      alt="Defect reference"
-                      className="w-9 h-9 rounded-lg object-cover border border-[#E5E5E5]"
-                    />
-                    <span>Photo attached</span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E5E5E5]">
-              <button
-                type="button"
-                onClick={() => setShowReplacementModal(false)}
-                disabled={isSubmittingReplacement}
-                className="sf-btn-secondary text-xs h-9 px-4"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={isSubmittingReplacement || isUploadingPhoto}
-                className="inline-flex items-center justify-center gap-1.5 px-4 h-9 rounded-[10px] text-xs font-bold text-white bg-[#111111] hover:bg-black transition-colors"
-              >
-                {isSubmittingReplacement ? 'Submitting...' : 'Submit Replacement Request'}
-              </button>
-            </div>
-          </form>
         </div>
       )}
 

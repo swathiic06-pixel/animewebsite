@@ -14,6 +14,7 @@ import { OrderStatusBadge } from '../components/common/Badge'
 import { OWNER_WHATSAPP, OWNER_UPI_ID } from '../lib/clerkClient'
 import { cldUrl } from '../lib/cloudinary'
 import OrderLifecycleActions from '../components/storefront/OrderLifecycleActions'
+import ItemReplacementBadge from '../components/storefront/ItemReplacementBadge'
 
 export default function OrderConfirmation() {
   const { orderId } = useParams()
@@ -145,22 +146,27 @@ export default function OrderConfirmation() {
         </div>
 
         {/* Items */}
-        <div className="divide-y divide-[#E5E5E5] text-sm">
+        <div className="space-y-3 text-sm">
           {order.items.map((item, idx) => (
-            <div key={idx} className="py-3 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <img
-                  src={cldUrl(item.image_url, { width: 160, height: 160, crop: 'fill' })}
-                  alt={item.name}
-                  loading="lazy"
-                  className="w-11 h-11 object-cover rounded-[12px] bg-[#F8F8F6] border border-[#E5E5E5]"
-                />
-                <div>
-                  <p className="font-semibold text-[#111111]">{item.name}</p>
-                  <p className="text-xs text-[#6B6B6B]">Qty: {item.qty} × {formatPrice(item.price)}</p>
+            <div key={idx} className="p-3.5 rounded-[12px] bg-[#FAF9F5]/40 border border-[#EDEDED] space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <img
+                    src={cldUrl(item.image_url, { width: 160, height: 160, crop: 'fill' })}
+                    alt={item.name}
+                    loading="lazy"
+                    className="w-11 h-11 object-cover rounded-[12px] bg-[#F8F8F6] border border-[#E5E5E5]"
+                  />
+                  <div>
+                    <p className="font-semibold text-[#111111]">{item.name}</p>
+                    <p className="text-xs text-[#6B6B6B]">Qty: {item.qty} × {formatPrice(item.price)}</p>
+                  </div>
                 </div>
+                <span className="font-bold text-[#111111]">{formatPrice(item.price * item.qty)}</span>
               </div>
-              <span className="font-bold text-[#111111]">{formatPrice(item.price * item.qty)}</span>
+
+              {/* Per-Item Replacement Request & Status */}
+              <ItemReplacementBadge order={order} item={item} />
             </div>
           ))}
         </div>

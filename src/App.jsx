@@ -26,6 +26,7 @@ import ManageProducts from './pages/admin/ManageProducts'
 import ManageCategories from './pages/admin/ManageCategories'
 import ManageOrders from './pages/admin/ManageOrders'
 import ManageRequests from './pages/admin/ManageRequests'
+import ManageReplacements from './pages/admin/ManageReplacements'
 import Customers from './pages/admin/Customers'
 import Messages from './pages/admin/Messages'
 import AdminSettings from './pages/admin/AdminSettings'
@@ -53,6 +54,7 @@ export default function App() {
             <Route path="/admin/products" element={<ProtectedAdminRoute><ManageProducts /></ProtectedAdminRoute>} />
             <Route path="/admin/categories" element={<ProtectedAdminRoute><ManageCategories /></ProtectedAdminRoute>} />
             <Route path="/admin/orders" element={<ProtectedAdminRoute><ManageOrders /></ProtectedAdminRoute>} />
+            <Route path="/admin/replacements" element={<ProtectedAdminRoute><ManageReplacements /></ProtectedAdminRoute>} />
             <Route path="/admin/requests" element={<ProtectedAdminRoute><ManageRequests /></ProtectedAdminRoute>} />
             <Route path="/admin/content" element={<Navigate to="/admin" replace />} />
             <Route path="/admin/customers" element={<ProtectedAdminRoute><Customers /></ProtectedAdminRoute>} />

@@ -11,6 +11,7 @@ import { formatPrice } from '../../utils/formatPrice'
 import { OrderStatusBadge } from '../../components/common/Badge'
 import { OWNER_WHATSAPP } from '../../lib/clerkClient'
 import { cldUrl } from '../../lib/cloudinary'
+import ItemReplacementBadge from '../../components/storefront/ItemReplacementBadge'
 import OrderLifecycleActions from '../../components/storefront/OrderLifecycleActions'
 
 export default function OrderHistory() {
@@ -74,29 +75,34 @@ export default function OrderHistory() {
               </div>
 
               {/* Items in order */}
-              <div className="space-y-2.5">
+              <div className="space-y-3">
                 {(order.items || []).map((item, idx) => (
-                  <div key={idx} className="flex items-center justify-between gap-3 text-sm">
-                    <div className="flex items-center gap-3">
-                      <img
-                        src={cldUrl(item.image_url, { width: 160, height: 160, crop: 'fill' })}
-                        alt={item.name}
-                        loading="lazy"
-                        className="w-12 h-12 rounded-[12px] object-cover bg-[#F8F8F6] border border-[#E5E5E5] flex-shrink-0"
-                      />
-                      <div>
-                        <p className="font-medium text-[#111111]">{item.name}</p>
-                        <p className="text-xs text-[#6B6B6B]">Qty: {item.qty} × {formatPrice(item.price)}</p>
+                  <div key={idx} className="p-3.5 rounded-[12px] bg-[#FAF9F5]/40 border border-[#EDEDED] space-y-2">
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={cldUrl(item.image_url, { width: 160, height: 160, crop: 'fill' })}
+                          alt={item.name}
+                          loading="lazy"
+                          className="w-12 h-12 rounded-[12px] object-cover bg-[#F8F8F6] border border-[#E5E5E5] flex-shrink-0"
+                        />
+                        <div>
+                          <p className="font-medium text-[#111111]">{item.name}</p>
+                          <p className="text-xs text-[#6B6B6B]">Qty: {item.qty} × {formatPrice(item.price)}</p>
+                        </div>
                       </div>
+                      <span className="font-bold text-[#111111]">
+                        {formatPrice(item.price * item.qty)}
+                      </span>
                     </div>
-                    <span className="font-bold text-[#111111]">
-                      {formatPrice(item.price * item.qty)}
-                    </span>
+
+                    {/* Per-Item Replacement Request & Status */}
+                    <ItemReplacementBadge order={order} item={item} />
                   </div>
                 ))}
               </div>
 
-              {/* Order Lifecycle Actions: 24h Cancel, 5-Day Replacement, Courier Tracking, Invoice */}
+              {/* Order Lifecycle Actions: 24h Cancel, Courier Tracking, Invoice */}
               <OrderLifecycleActions order={order} />
 
               {/* Footer: Total + Actions */}

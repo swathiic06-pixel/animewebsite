@@ -11,7 +11,7 @@ const PROFILES_STORAGE_KEY = 'animemax_profiles_v1'
 const MOCK_USER_STORAGE_KEY = 'animemax_mock_user_v1'
 const BANNERS_STORAGE_KEY = 'animemax_banners_v1'
 const REQUESTS_STORAGE_KEY = 'animemax_requests_v1'
-const REPLACEMENTS_STORAGE_KEY = 'animemax_replacements_v1'
+const REPLACEMENTS_STORAGE_KEY = 'animemax_replacements_v2'
 
 export function generateUUID() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -461,14 +461,14 @@ export function AppProvider({ children }) {
       const client = supabaseAnon || supabase
       let { data: remoteOrders, error: ordErr } = await client
         .from('orders')
-        .select('*')
+        .select('*, order_items(*)')
         .order('created_at', { ascending: false })
 
       if (ordErr && (ordErr.code === 'PGRST301' || ordErr.message?.includes('key') || ordErr.message?.includes('JWT'))) {
         if (supabaseAnon && client !== supabaseAnon) {
           const retry = await supabaseAnon
             .from('orders')
-            .select('*')
+            .select('*, order_items(*)')
             .order('created_at', { ascending: false })
           remoteOrders = retry.data
           ordErr = retry.error
@@ -476,9 +476,23 @@ export function AppProvider({ children }) {
       }
 
       if (!ordErr && Array.isArray(remoteOrders)) {
-        const cleanRemote = remoteOrders.filter(
-          o => o && o.id && o.id !== 'ord-9042' && o.id !== 'ord-8711' && !String(o.id).startsWith('ord-demo')
-        )
+        const cleanRemote = remoteOrders
+          .filter(o => o && o.id && o.id !== 'ord-9042' && o.id !== 'ord-8711' && !String(o.id).startsWith('ord-demo'))
+          .map(o => {
+            const relItems = Array.isArray(o.order_items) ? o.order_items : []
+            const enrichedItems = (Array.isArray(o.items) ? o.items : []).map((it, idx) => {
+              const pId = String(it.product_id || it.id || '')
+              const matchOi = relItems.find(oi => String(oi.product_id) === pId) || relItems[idx]
+              return {
+                ...it,
+                order_item_id: matchOi ? matchOi.id : (it.order_item_id || null)
+              }
+            })
+            return {
+              ...o,
+              items: enrichedItems
+            }
+          })
         setOrders(cleanRemote)
         try {
           localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(cleanRemote))
@@ -562,7 +576,10 @@ export function AppProvider({ children }) {
       const client = supabaseAnon || supabase
       const { data: remoteReplacements, error } = await client
         .from('replacement_requests')
-        .select('*')
+        .select(`
+          *,
+          images:replacement_request_images(*)
+        `)
         .order('created_at', { ascending: false })
 
       if (!error && Array.isArray(remoteReplacements)) {
@@ -722,6 +739,10 @@ export function AppProvider({ children }) {
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'replacement_requests' }, async (payload) => {
         console.log('[Realtime] Replacement requests change:', payload.eventType)
+        await refreshReplacementRequests()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'replacement_request_images' }, async (payload) => {
+        console.log('[Realtime] Replacement request images change:', payload.eventType)
         await refreshReplacementRequests()
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, async (payload) => {
@@ -1550,16 +1571,21 @@ export function AppProvider({ children }) {
         console.error('[Supabase] updateOrderStatus exception:', err)
       }
     }
-  }
-
-  // Replacement Requests Operations (Part 2)
-  const createReplacementRequest = async ({ orderId, reason, referenceImageUrl }) => {
+  }  // Replacement Requests Operations (Amazon-Style Flow)
+  const createReplacementRequest = async ({
+    orderId,
+    orderItemId,
+    reasonCategory,
+    description,
+    imageUrls = [],
+    userId = null
+  }) => {
     const order = orders.find(o => String(o.id) === String(orderId))
     if (!order) {
-      throw new Error('Order not found')
+      throw new Error('Order not found.')
     }
-    if (order.status !== 'delivered' && order.status !== 'replacement_requested') {
-      throw new Error('Replacements can only be requested for delivered orders.')
+    if (order.status !== 'delivered') {
+      throw new Error(`Replacements can only be requested for delivered orders (current status: "${order.status}").`)
     }
     if (!order.delivered_at) {
       throw new Error('Delivery timestamp is missing for this order.')
@@ -1569,62 +1595,159 @@ export function AppProvider({ children }) {
     if (daysSinceDelivery > 5) {
       throw new Error('Replacement window has closed (5 days post-delivery limit).')
     }
-
-    const newRequest = {
-      id: generateUUID(),
-      order_id: orderId,
-      reason: reason.trim(),
-      reference_image_url: referenceImageUrl || null,
-      status: 'pending',
-      created_at: new Date().toISOString(),
+    if (!orderItemId) {
+      throw new Error('Specific line item must be selected for replacement.')
+    }
+    if (!imageUrls || imageUrls.length === 0) {
+      throw new Error('At least one photo is required as evidence.')
+    }
+    if (imageUrls.length > 5) {
+      throw new Error('A maximum of 5 photos can be attached.')
     }
 
-    // Persist to Supabase
+    let newRequest = null
+
+    // Call atomic Supabase RPC with server-side 5-day & duplicate verification
     if (isSupabaseConfigured) {
       const client = supabaseAnon || supabase
-      const { error } = await client.from('replacement_requests').insert([newRequest])
+      const { data, error } = await client.rpc('submit_replacement_request', {
+        p_order_id: orderId,
+        p_order_item_id: orderItemId,
+        p_reason_category: reasonCategory,
+        p_description: description.trim(),
+        p_image_urls: imageUrls,
+        p_user_id: userId || mockUser?.id || null
+      })
+
       if (error) {
-        console.warn('[Supabase] replacement_requests insert warning:', error.message)
+        console.error('[Supabase] submit_replacement_request error:', error.message)
+        throw new Error(error.message || 'Failed to submit replacement request.')
+      }
+      newRequest = data
+    } else {
+      // Local / Offline fallback
+      const newId = generateUUID()
+      newRequest = {
+        id: newId,
+        order_id: orderId,
+        order_item_id: orderItemId,
+        reason_category: reasonCategory,
+        description: description.trim(),
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        images: imageUrls.map((url, idx) => ({
+          id: generateUUID(),
+          replacement_request_id: newId,
+          image_url: url,
+          sort_order: idx
+        }))
       }
     }
 
-    setReplacementRequests(prev => [newRequest, ...prev])
+    setReplacementRequests(prev => [newRequest, ...prev.filter(r => r.id !== newRequest.id)])
     try {
       localStorage.setItem(REPLACEMENTS_STORAGE_KEY, JSON.stringify([newRequest, ...replacementRequests]))
     } catch {}
 
-    // Update order status to replacement_requested
-    await updateOrderStatus(orderId, 'replacement_requested')
+    // Trigger notify-owner Edge Function in background
+    if (isSupabaseConfigured) {
+      const client = supabaseAnon || supabase
+      const targetItem = order.items?.find(it => it.order_item_id === orderItemId || (it.product_id || it.id) === orderItemId)
+      client.functions.invoke('notify-owner', {
+        body: {
+          type: 'replacement_request',
+          record: {
+            ...newRequest,
+            product_name: targetItem?.name || 'Anime Collectible',
+            buyer_name: order.buyer_name,
+            buyer_phone: order.buyer_phone || order.buyer_whatsapp,
+            image_urls: imageUrls
+          }
+        }
+      }).catch(err => {
+        console.log('[notify-owner] replacement alert notice:', err?.message)
+      })
+    }
+
     return newRequest
   }
 
-  const updateReplacementStatus = async (requestId, newStatus) => {
+  const updateReplacementDecision = async ({
+    requestId,
+    status,
+    ownerNote = null,
+    trackingNumber = null
+  }) => {
+    let updated = null
+
+    if (isSupabaseConfigured) {
+      const client = supabaseAnon || supabase
+      const { data, error } = await client.rpc('update_replacement_decision', {
+        p_request_id: requestId,
+        p_status: status,
+        p_owner_note: ownerNote || null,
+        p_tracking_number: trackingNumber || null
+      })
+
+      if (error) {
+        console.warn('[Supabase] update_replacement_decision RPC failed, falling back to direct update:', error.message)
+        const patch = {
+          status,
+          ...(ownerNote !== null ? { owner_note: ownerNote } : {}),
+          ...(trackingNumber ? { tracking_number: trackingNumber, shipped_at: new Date().toISOString() } : {}),
+          ...(['approved', 'declined'].includes(status) ? { resolved_at: new Date().toISOString() } : {})
+        }
+        await client.from('replacement_requests').update(patch).eq('id', requestId)
+      } else {
+        updated = data
+      }
+    }
+
     setReplacementRequests(prev => {
-      const next = prev.map(r => (String(r.id) === String(requestId) ? { ...r, status: newStatus } : r))
+      const next = prev.map(r => {
+        if (String(r.id) === String(requestId)) {
+          return updated || {
+            ...r,
+            status,
+            ...(ownerNote !== null ? { owner_note: ownerNote } : {}),
+            ...(trackingNumber !== null ? { tracking_number: trackingNumber, shipped_at: new Date().toISOString() } : {}),
+            ...(['approved', 'declined'].includes(status) ? { resolved_at: new Date().toISOString() } : {})
+          }
+        }
+        return r
+      })
       try {
         localStorage.setItem(REPLACEMENTS_STORAGE_KEY, JSON.stringify(next))
       } catch {}
       return next
     })
 
+    // Trigger notify-owner / buyer Edge Function
     if (isSupabaseConfigured) {
-      try {
-        const client = supabaseAnon || supabase
-        await client.from('replacement_requests').update({ status: newStatus }).eq('id', requestId)
-      } catch (err) {
-        console.warn('Failed to update replacement status in Supabase:', err)
-      }
+      const client = supabaseAnon || supabase
+      const req = replacementRequests.find(r => String(r.id) === String(requestId))
+      client.functions.invoke('notify-owner', {
+        body: {
+          type: 'replacement_decision',
+          record: {
+            ...(req || {}),
+            ...(updated || {}),
+            status,
+            owner_note: ownerNote,
+            tracking_number: trackingNumber
+          }
+        }
+      }).catch(err => {
+        console.log('[notify-owner] decision alert notice:', err?.message)
+      })
     }
 
-    // If completed, update order status to replacement_resolved
-    const req = replacementRequests.find(r => String(r.id) === String(requestId))
-    if (req?.order_id) {
-      if (newStatus === 'completed') {
-        await updateOrderStatus(req.order_id, 'replacement_resolved')
-      } else if (newStatus === 'approved') {
-        await updateOrderStatus(req.order_id, 'replacement_requested')
-      }
-    }
+    return updated
+  }
+
+  // Backward compatibility wrapper
+  const updateReplacementStatus = async (requestId, newStatus, ownerNote = null, trackingNumber = null) => {
+    return updateReplacementDecision({ requestId, status: newStatus, ownerNote, trackingNumber })
   }
 
   // Shiprocket Shipping Operations (Part 5)
@@ -1924,6 +2047,7 @@ export function AppProvider({ children }) {
         replacementRequests,
         refreshReplacementRequests,
         createReplacementRequest,
+        updateReplacementDecision,
         updateReplacementStatus,
         createShiprocketShipment,
         generateInvoice,

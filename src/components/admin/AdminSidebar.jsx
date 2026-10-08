@@ -11,7 +11,8 @@ import {
   HelpCircle,
   ChevronLeft,
   Menu,
-  Inbox
+  Inbox,
+  RotateCcw
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 
@@ -22,10 +23,11 @@ export default function AdminSidebar({
   onMobileClose 
 }) {
   const location = useLocation()
-  const { orders, requests = [] } = useApp()
+  const { orders, requests = [], replacementRequests = [] } = useApp()
 
   const pendingCount = orders.filter((o) => o.status === 'pending').length
   const newRequestsCount = requests.filter((r) => r.status === 'new').length
+  const pendingReplacementsCount = replacementRequests.filter((r) => r.status === 'pending').length
 
   const primaryNavItems = [
     {
@@ -39,6 +41,12 @@ export default function AdminSidebar({
       path: '/admin/orders',
       icon: ShoppingBag,
       badge: pendingCount > 0 ? pendingCount : null
+    },
+    {
+      name: 'Replacements',
+      path: '/admin/replacements',
+      icon: RotateCcw,
+      badge: pendingReplacementsCount > 0 ? pendingReplacementsCount : null
     },
     {
       name: 'Requests',
